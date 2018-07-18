@@ -179,7 +179,7 @@ def main():
         help='Apply module mappings defined in FILE')
     misc_options.add_argument(
         '--purge-env', action='store_true', dest='purge_env', default=False,
-        help="Perform a `module purge' before setup")
+        help="Perform a `module purge' before loading any checks. This is to ensure that ReFrame has a clean environment before running. You might like to consider the setting 'modules_system_purge' under the system settings in the settings.py file. If this is True, then `module purge' is inserted before the `module load' section of each generated script.")
     misc_options.add_argument(
         '--nocolor', action='store_false', dest='colorize', default=True,
         help='Disable coloring of output')
