@@ -23,7 +23,7 @@ class RegressionCheckValidator(ast.NodeVisitor):
         return self._has_func
 
     def visit_FunctionDef(self, node):
-        if node.name == '_get_checks':
+        if node.name == '_get_checks' or node.name == '_rfm_gettests':
             self._has_func = True
 
 
