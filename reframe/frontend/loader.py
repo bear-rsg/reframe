@@ -16,33 +16,15 @@ from reframe.core.logging import getlogger
 
 class RegressionCheckValidator(ast.NodeVisitor):
     def __init__(self):
-        self._has_import = False
-        self._has_regression_test = False
+        self._has_func = False
 
     @property
     def valid(self):
-        return self._has_import and self._has_regression_test
+        return self._has_func
 
-    def visit_Import(self, node):
-        for m in node.names:
-            if m.name.startswith('reframe'):
-                self._has_import = True
-
-    def visit_ImportFrom(self, node):
-        if node.module.startswith('reframe'):
-            self._has_import = True
-
-    def visit_ClassDef(self, node):
-        for b in node.bases:
-            try:
-                # Unqualified name as in `class C(RegressionTest)`
-                cls_name = b.id
-            except AttributeError:
-                # Qualified name as in `class C(rfm.RegressionTest)`
-                cls_name = b.attr
-
-            if 'RegressionTest' in cls_name:
-                self._has_regression_test = True
+    def visit_FunctionDef(self, node):
+        if node.name == '_get_checks':
+            self._has_func = True
 
 
 class RegressionCheckLoader:
@@ -160,7 +142,7 @@ class RegressionCheckLoader:
 
             if (entry.name.startswith('.') or
                 not entry.name.endswith('.py') or
-                not entry.is_file()):
+                    not entry.is_file()):
                 continue
 
             checks.extend(self.load_from_file(entry.path))
