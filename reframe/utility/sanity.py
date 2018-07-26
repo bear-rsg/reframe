@@ -399,7 +399,7 @@ def assert_le(a, b, msg=None):
 
 
 @deferrable
-def assert_found(patt, filename, msg=None, encoding='utf-8'):
+def assert_found(patt, filename, msg=None, encoding='utf-8', errors='replace'):
     """Assert that regex pattern ``patt`` is found in the file ``filename``.
 
     :arg patt: The regex pattern to search.
@@ -413,7 +413,7 @@ def assert_found(patt, filename, msg=None, encoding='utf-8'):
     :returns: ``True`` on success.
     :raises reframe.core.exceptions.SanityError: if assertion fails.
     """
-    num_matches = count(finditer(patt, filename, encoding))
+    num_matches = count(finditer(patt, filename, encoding, errors))
     try:
         evaluate(assert_true(num_matches))
     except SanityError:
@@ -424,7 +424,7 @@ def assert_found(patt, filename, msg=None, encoding='utf-8'):
 
 
 @deferrable
-def assert_not_found(patt, filename, msg=None, encoding='utf-8'):
+def assert_not_found(patt, filename, msg=None, encoding='utf-8', errors='replace'):
     """Assert that regex pattern ``patt`` is not found in the file
     ``filename``.
 
@@ -434,7 +434,7 @@ def assert_not_found(patt, filename, msg=None, encoding='utf-8'):
     :raises reframe.core.exceptions.SanityError: if assertion fails.
     """
     try:
-        evaluate(assert_found(patt, filename, msg, encoding))
+        evaluate(assert_found(patt, filename, msg, encoding, errors))
     except SanityError:
         return True
     else:
@@ -523,7 +523,7 @@ def assert_reference(val, ref, lower_thres=None, upper_thres=None, msg=None):
 # Pattern matching functions
 
 @deferrable
-def finditer(patt, filename, encoding='utf-8'):
+def finditer(patt, filename, encoding='utf-8', errors='replace'):
     """Get an iterator over the matches of the regex ``patt`` in ``filename``.
 
     This function is equivalent to :func:`findall()` except that it returns
@@ -531,7 +531,7 @@ def finditer(patt, filename, encoding='utf-8'):
     the raw matches.
     """
     try:
-        with open(filename, 'rt', encoding=encoding) as fp:
+        with open(filename, 'rt', encoding=encoding, errors=errors) as fp:
             yield from re.finditer(patt, fp.read(), re.MULTILINE)
     except OSError as e:
         # Re-raise it as sanity error
@@ -539,7 +539,7 @@ def finditer(patt, filename, encoding='utf-8'):
 
 
 @deferrable
-def findall(patt, filename, encoding='utf-8'):
+def findall(patt, filename, encoding='utf-8', errors='replace'):
     """Get all matches of regex ``patt`` in ``filename``.
 
     :arg patt: The regex pattern to search.
@@ -553,11 +553,11 @@ def findall(patt, filename, encoding='utf-8'):
     :raises reframe.core.exceptions.SanityError: In case an :class:`OSError` is
         raised while processing ``filename``.
     """
-    return list(evaluate(x) for x in finditer(patt, filename, encoding))
+    return list(evaluate(x) for x in finditer(patt, filename, encoding, errors))
 
 
 @deferrable
-def extractiter(patt, filename, tag=0, conv=None, encoding='utf-8'):
+def extractiter(patt, filename, tag=0, conv=None, encoding='utf-8', errors='replace'):
     """Get an iterator over the values extracted from the capturing group
     ``tag`` of a matching regex ``patt`` in the file ``filename``.
 
@@ -565,7 +565,7 @@ def extractiter(patt, filename, tag=0, conv=None, encoding='utf-8'):
     a generator object, instead of a list, which you can use to iterate over
     the extracted values.
     """
-    for m in finditer(patt, filename, encoding):
+    for m in finditer(patt, filename, encoding, errors):
         try:
             val = m.group(tag)
         except (IndexError, KeyError):
@@ -591,7 +591,7 @@ def extractiter(patt, filename, tag=0, conv=None, encoding='utf-8'):
 
 
 @deferrable
-def extractall(patt, filename, tag=0, conv=None, encoding='utf-8'):
+def extractall(patt, filename, tag=0, conv=None, encoding='utf-8', errors='replace'):
     """Extract all values from the capturing group ``tag`` of a matching regex
     ``patt`` in the file ``filename``.
 
@@ -612,11 +612,11 @@ def extractall(patt, filename, tag=0, conv=None, encoding='utf-8'):
     :raises reframe.core.exceptions.SanityError: In case of errors.
     """
     return list(evaluate(x)
-                for x in extractiter(patt, filename, tag, conv, encoding))
+                for x in extractiter(patt, filename, tag, conv, encoding, errors))
 
 
 @deferrable
-def extractsingle(patt, filename, tag=0, conv=None, item=0, encoding='utf-8'):
+def extractsingle(patt, filename, tag=0, conv=None, item=0, encoding='utf-8', errors='replace'):
     """Extract a single value from the capturing group ``tag`` of a matching regex
     ``patt`` in the file ``filename``.
 
@@ -637,7 +637,7 @@ def extractsingle(patt, filename, tag=0, conv=None, item=0, encoding='utf-8'):
         # Explicitly evaluate the expression here, so as to force any exception
         # to be thrown in this context and not during the evaluation of an
         # expression containing this one.
-        return evaluate(extractall(patt, filename, tag, conv, encoding)[item])
+        return evaluate(extractall(patt, filename, tag, conv, encoding, errors)[item])
     except IndexError:
         raise SanityError("not enough matches of pattern `%s' in file `%s' "
                           "so as to extract item `%s'" % (patt, filename, item))
