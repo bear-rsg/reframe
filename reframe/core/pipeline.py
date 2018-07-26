@@ -291,6 +291,12 @@ class RegressionTest:
     num_tasks_per_socket = fields.IntegerField('num_tasks_per_socket',
                                                allow_none=True)
 
+    #: Array settings for this task.
+    #:
+    #: :type: str or :class:`None`
+    #: :default: :class:`None`
+    array_settings = fields.ArraySettingsField('array_settings', allow_none=True)
+
     #: Specify whether this tests needs simultaneous multithreading enabled.
     #:
     #: Ignored if :class:`None`.
@@ -513,6 +519,7 @@ class RegressionTest:
         self.num_cpus_per_task = None
         self.num_tasks_per_core = None
         self.num_tasks_per_socket = None
+        self.array_settings = None
         self.use_multithreading = None
         self.exclusive_access = False
 

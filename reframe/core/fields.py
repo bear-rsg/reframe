@@ -407,6 +407,40 @@ class ScopedDictField(AggregateTypeField):
                           ScopedDict(value) if value is not None else value)
 
 
+class ArraySettingsField(StringField):
+    """Stores an array settings string"""
+
+    def __init__(self, fieldname, allow_none=False):
+        super().__init__(fieldname, allow_none)
+
+    def __set__(self, obj, value):
+        if not self._check_type(value):
+            raise TypeError('a string type is required')
+
+        if value is not None:
+            # Strip % suffix
+            index = value.rfind('%')
+            if index == -1:
+                nvalue = value
+            else:
+                nvalue = value[:index]
+                remainder = value[index+1:]
+                try:
+                    int(remainder)
+                except ValueError as e:
+                    raise ValueError('string "%s" is not a valid array settings specifier' % value) from e
+
+            # Parse start bit
+            indices = nvalue.split(',')
+
+            # Check if they all match a regex pattern
+            for index in indices:
+                if not re.fullmatch(r'[0-9]*-[0-9]*(:[0-9]*)?|[0-9]*', index, re.ASCII):
+                    raise ValueError('string "%s" is not a valid array settings specifier' % value)
+
+        super().__set__(obj, value)
+
+
 class DeprecatedField(Field):
     """Field wrapper for deprecating fields."""
 
