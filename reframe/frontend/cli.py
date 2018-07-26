@@ -1,3 +1,4 @@
+from fnmatch import fnmatch
 import os
 import socket
 import sys
@@ -362,15 +363,18 @@ def main():
             raise ReframeError from e
 
         # Filter checks by name
+        def matches_any_pattern(name, patterns):
+            return any((fnmatch(name, p) for p in patterns))
+
         checks_matched = filter(
             lambda c:
-            c if c.name not in options.exclude_names else None,
+            c if not matches_any_pattern(c.name, options.exclude_names) else None,
             checks_found
         )
 
         if options.names:
             checks_matched = filter(
-                lambda c: c if c.name in options.names else None,
+                lambda c: c if matches_any_pattern(c.name, options.names) else None,
                 checks_matched
             )
 
