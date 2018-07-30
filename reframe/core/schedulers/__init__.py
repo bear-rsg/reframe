@@ -68,6 +68,7 @@ class Job(abc.ABC):
                  script_filename=None,
                  stdout=None,
                  stderr=None,
+                 pre_environ=[],
                  pre_run=[],
                  post_run=[],
                  sched_account=None,
@@ -80,6 +81,9 @@ class Job(abc.ABC):
 
         # Mutable fields
         self.options = list(sched_options)
+
+        # Commands to be fun before environment loading
+        self._pre_environ = list(pre_environ)
 
         # Commands to be run before and after the job is launched
         self._pre_run  = list(pre_run)
@@ -211,6 +215,10 @@ class Job(abc.ABC):
     def sched_exclusive_access(self):
         return self._sched_exclusive_access
 
+    def emit_pre_environ(self, builder):
+        for c in self._pre_environ:
+            builder.verbatim(c)
+
     def emit_environ(self, builder):
         rt = runtime()
         if rt.system.modules_system_purge:
@@ -229,6 +237,7 @@ class Job(abc.ABC):
 
     def prepare(self, script_builder):
         self.emit_preamble(script_builder)
+        self.emit_pre_environ(script_builder)
         self.emit_environ(script_builder)
         self.emit_pre_run(script_builder)
         self.launcher.emit_run_command(self, script_builder)

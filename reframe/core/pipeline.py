@@ -153,6 +153,16 @@ class RegressionTest:
     #: :default: ``[]``
     executable_opts = fields.TypedListField('executable_opts', str)
 
+    #: List of shell commands to execute before loading the environment for this job.
+    #:
+    #: These commands do not execute in the context of ReFrame.
+    #: Instead, they are emitted in the generated job script just before the
+    #: environment of the job script is loaded.
+    #:
+    #: :type: :class:`list` of :class:`str`
+    #: :default: ``[]``
+    pre_environ = fields.TypedListField('pre_environ', str)
+
     #: List of shell commands to execute before launching this job.
     #:
     #: These commands do not execute in the context of ReFrame.
@@ -496,6 +506,7 @@ class RegressionTest:
         self.postbuild_cmd = []
         self.executable = os.path.join('.', self.name)
         self.executable_opts = []
+        self.pre_environ  = []
         self.pre_run  = []
         self.post_run = []
         self.keep_files = []
@@ -818,6 +829,7 @@ class RegressionTest:
             script_filename=job_script_filename,
             stdout=self._stdout,
             stderr=self._stderr,
+            pre_environ=self.pre_environ,
             sched_exclusive_access=self.exclusive_access,
             **job_opts)
 
