@@ -7,6 +7,7 @@ import os
 import pprint
 import shutil
 import sys
+import threading
 import warnings
 from datetime import datetime
 
@@ -418,25 +419,34 @@ class LoggerAdapter(logging.LoggerAdapter):
 null_logger = LoggerAdapter()
 
 _logger = None
-_perf_logger = None
-_context_logger = null_logger
+_init_perf_logger = None
+_init_context_logger = null_logger
+_thread_local = threading.local()
+
+
+def _getlocal():
+    global _thread_local, _init_perf_logger, _init_context_logger
+
+    if not hasattr(_thread_local, 'perf_logger') or _thread_local.perf_logger is None:
+        _thread_local.perf_logger = _init_perf_logger
+    
+    if not hasattr(_thread_local, 'context_logger') or _thread_local.context_logger is null_logger:
+        _thread_local.context_logger = _init_context_logger
+
+    return _thread_local
 
 
 class logging_context:
     def __init__(self, check=None, level=DEBUG):
-        global _context_logger
-
         self._level = level
-        self._orig_logger = _context_logger
+        self._orig_logger = _getlocal().context_logger
         if check is not None:
-            _context_logger = LoggerAdapter(_logger, check)
+            _getlocal()._context_logger = LoggerAdapter(_logger, check)
 
     def __enter__(self):
-        return _context_logger
+        return _getlocal().context_logger
 
     def __exit__(self, exc_type, exc_value, traceback):
-        global _context_logger
-
         # Log any exceptions thrown with the current context logger
         if exc_type is not None:
             msg = 'caught {0}: {1}'
@@ -444,11 +454,11 @@ class logging_context:
             getlogger().log(self._level, msg.format(exc_fullname, exc_value))
 
         # Restore context logger
-        _context_logger = self._orig_logger
+        _getlocal().context_logger = self._orig_logger
 
 
 def configure_logging(loggin_config):
-    global _logger, _context_logger
+    global _logger, _init_context_logger
 
     if loggin_config is None:
         _logger = None
@@ -456,13 +466,15 @@ def configure_logging(loggin_config):
         return
 
     _logger = load_from_dict(loggin_config)
-    _context_logger = LoggerAdapter(_logger)
+    _init_context_logger = LoggerAdapter(_logger)
+    _getlocal().context_logger = _init_context_logger
 
 
 def configure_perflogging(perf_logging_config):
-    global _perf_logger
+    global _init_perf_logger
 
-    _perf_logger = load_from_dict(perf_logging_config)
+    _init_perf_logger = load_from_dict(perf_logging_config)
+    _getlocal().perf_logger = _init_perf_logger
 
 
 def save_log_files(dest):
@@ -473,8 +485,8 @@ def save_log_files(dest):
 
 
 def getlogger():
-    return _context_logger
+    return _getlocal().context_logger
 
 
 def getperflogger(check):
-    return LoggerAdapter(_perf_logger, check)
+    return LoggerAdapter(_getlocal().perf_logger, check)
