@@ -76,13 +76,17 @@ class Environment:
         # conflicted module list must be filled at the time of load
         rt = runtime()
         for m in self._modules:
-            if rt.modules_system.is_module_loaded(m):
-                self._preloaded.add(m)
+            # If the modules_system_purge option is on, then don't actually load any modules,
+            # as they will just be purged anyway, and will slow down the tests, as it will take
+            # time to unload them again with the 'module purge'.
+            if not rt.system.modules_system_purge:
+                if rt.modules_system.is_module_loaded(m):
+                    self._preloaded.add(m)
 
-            self._conflicted += rt.modules_system.load_module(m, force=True)
-            for conflict in self._conflicted:
-                stmts = rt.modules_system.emit_unload_commands(conflict)
-                self._load_stmts += stmts
+                self._conflicted += rt.modules_system.load_module(m, force=True)
+                for conflict in self._conflicted:
+                    stmts = rt.modules_system.emit_unload_commands(conflict)
+                    self._load_stmts += stmts
 
             self._load_stmts += rt.modules_system.emit_load_commands(m)
 
