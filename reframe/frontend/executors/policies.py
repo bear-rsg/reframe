@@ -1,7 +1,10 @@
 import math
 import sys
 import time
+import threading
+import queue
 from datetime import datetime
+from queue import Queue
 
 from reframe.core.exceptions import TaskExit
 from reframe.core.logging import getlogger
@@ -92,6 +95,102 @@ class PollRateFunction:
         return self._a*math.exp(-self._c*x) + self._b
 
 
+class TaskFinalizerThread(threading.Thread):
+    def __init__(self, policy):
+
+        super().__init__()
+
+        self.daemon = True
+        
+        self._policy = policy
+        self._retired_tasks = Queue()
+
+        self._stop_event = threading.Event()
+        self._stop_when_done_event = threading.Event()
+
+    def request_stop(self):
+        """Requests that the thread stop finalizing tasks."""
+        self._stop_event.set()
+
+    def request_stop_when_done(self):
+        """Requests that the thread stops when the retired tasks queue is empty."""
+        self._stop_when_done_event.set()
+
+    def finalize_tasks(self):
+        """Waits for the thread to process all of the events in the queue, then
+        returns.
+        """
+        self.request_stop_when_done()
+        self.join()
+
+    def should_stop(self):
+        """Returns whether or not the thread has been requested to stop."""
+        return self._stop_event.is_set()
+
+    def abort_retired(self, cause):
+        """Abort all currently retired tasks, with a given cause."""
+        # Stop thread
+        self.request_stop()
+        
+        # Abort remaining tasks
+        while True:
+            try:
+                task = self._retired_tasks.get_nowait()
+            except queue.Empty:
+                break
+            
+            task.abort(cause)
+        
+        # Give thread 5 seconds to exit.
+        # Since the thread is a daemon, when the python process exits, the thread should
+        # abort.
+        # This will stop some cleanup code from running for the task that the thread is
+        # currently processing, however this is fine as it doesn't affect slurm -- all the
+        # running tasks have been aborted already -- this thread is just for already
+        # finished tasks.
+        self.join(timeout=5.0)
+
+    def _finalize_task(self, task):
+        if not self._policy.skip_sanity_check:
+            task.sanity()
+
+        if not self._policy.skip_performance_check:
+            task.performance()
+
+        task.cleanup(not self._policy.keep_stage_files, False)
+
+    def num_retired_tasks(self):
+        """Returns the number of tasks still to be finalized."""
+        return self._retired_tasks.qsize()
+
+    def retire_task(self, task):
+        """Adds a task to the retiring queue."""
+        getlogger().debug('retiring task: %s' % task.check.info())
+        getlogger().debug('retired queue: %d task(s)' % self.num_retired_tasks())
+        self._retired_tasks.put(task)
+
+    def run(self):
+        try:
+            while not self.should_stop():
+                getlogger().debug('retired queue: %d task(s)' % self.num_retired_tasks())
+                try:
+                    task = self._retired_tasks.get(True, timeout=0.5)
+                except queue.Empty:
+                    if self._stop_when_done_event.is_set():
+                        break  # Break -- no more tasks to come
+                    else:
+                        continue  # Retry
+
+                # Finalize task
+                getlogger().debug('finalizing task: %s' % task.check.info())
+                try:
+                    self._finalize_task(task)
+                except TaskExit:
+                    pass
+
+        finally:
+            getlogger().debug('finalizer thread: exiting')
+
 class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
     def __init__(self):
 
@@ -99,9 +198,10 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
 
         # All currently running tasks
         self._running_tasks = []
-
-        # Retired tasks that need to be finalized
-        self._retired_tasks = []
+        
+        # Task finalizer thread
+        self._finalizer_thread = TaskFinalizerThread(self)
+        self._finalizer_thread.start()
 
         # Counts of running tasks per partition
         self._running_tasks_counts = {}
@@ -143,7 +243,7 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
     def on_task_exit(self, task):
         task.wait()
         self._remove_from_running(task)
-        self._retired_tasks.append(task)
+        self._finalizer_thread.retire_task(task)
 
     def enter_partition(self, c, p):
         self._running_tasks_counts.setdefault(p.fullname, 0)
@@ -196,30 +296,6 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
         for t in self._running_tasks:
             t.poll()
 
-    def _finalize_all(self):
-        getlogger().debug('finalizing retired tasks: %s',
-                          len(self._retired_tasks))
-        while True:
-            try:
-                task = self._retired_tasks.pop()
-            except IndexError:
-                break
-
-            getlogger().debug('finalizing task: %s' % task.check.info())
-            try:
-                self._finalize_task(task)
-            except TaskExit:
-                pass
-
-    def _finalize_task(self, task):
-        if not self.skip_sanity_check:
-            task.sanity()
-
-        if not self.skip_performance_check:
-            task.performance()
-
-        task.cleanup(not self.keep_stage_files, False)
-
     def _failall(self, cause):
         """Mark all tests as failures"""
         try:
@@ -233,8 +309,7 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
             for task in ready_list:
                 task.abort(cause)
 
-        for task in self._retired_tasks:
-            task.abort(cause)
+        self._finalizer_thread.abort_retired(cause)
 
     def _reschedule(self, task, load_env=True):
         getlogger().debug('scheduling test case for running')
@@ -271,31 +346,34 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
         pollrate = PollRateFunction(0.2, 60)
         num_polls = 0
         t_start = datetime.now()
-        while self._running_tasks or self._retired_tasks:
-            getlogger().debug('running tasks: %s' % len(self._running_tasks))
-            num_polls += len(self._running_tasks)
-            try:
-                self._poll_tasks()
-                self._reschedule_all()
-                self._finalize_all()
-                t_elapsed = (datetime.now() - t_start).total_seconds()
-                real_rate = num_polls / t_elapsed
-                getlogger().debug(
-                    'polling rate (real): %.3f polls/sec' % real_rate)
-
-                if len(self._running_tasks):
-                    desired_rate = pollrate(t_elapsed, real_rate)
+        try:
+            while self._running_tasks:
+                getlogger().debug('running tasks: %s' % len(self._running_tasks))
+                num_polls += len(self._running_tasks)
+                try:
+                    self._poll_tasks()
+                    self._reschedule_all()
+                    t_elapsed = (datetime.now() - t_start).total_seconds()
+                    real_rate = num_polls / t_elapsed
                     getlogger().debug(
-                        'polling rate (desired): %.3f' % desired_rate)
-                    t = len(self._running_tasks) / desired_rate
-                    getlogger().debug('sleeping: %.3fs' % t)
-                    time.sleep(t)
+                        'polling rate (real): %.3f polls/sec' % real_rate)
 
-            except TaskExit:
-                pass
-            except ABORT_REASONS as e:
-                self._failall(e)
-                raise
+                    if len(self._running_tasks):
+                        desired_rate = pollrate(t_elapsed, real_rate)
+                        getlogger().debug(
+                            'polling rate (desired): %.3f' % desired_rate)
+                        t = len(self._running_tasks) / desired_rate
+                        getlogger().debug('sleeping: %.3fs' % t)
+                        time.sleep(t)
+                except TaskExit:
+                    pass
+
+            getlogger().debug('run all tasks. finalizing tasks...')
+            self._finalizer_thread.finalize_tasks()
+
+        except ABORT_REASONS as e:
+            self._failall(e)
+            raise
 
         self.printer.separator('short single line',
                                'all spawned checks have finished\n')
