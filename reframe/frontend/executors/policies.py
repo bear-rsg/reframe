@@ -172,7 +172,9 @@ class TaskFinalizerThread(threading.Thread):
     def run(self):
         try:
             while not self.should_stop():
-                getlogger().debug('retired queue: %d task(s)' % self.num_retired_tasks())
+                n = self.num_retired_tasks()
+                if n:
+                    getlogger().debug('retired queue: %d task(s)' % n)
                 try:
                     task = self._retired_tasks.get(True, timeout=0.5)
                 except queue.Empty:
