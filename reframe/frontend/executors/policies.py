@@ -104,6 +104,7 @@ class TaskFinalizerThread(threading.Thread):
         
         self._policy = policy
         self._retired_tasks = Queue()
+        self._current_task = None
 
         self._stop_event = threading.Event()
         self._stop_when_done_event = threading.Event()
@@ -148,16 +149,22 @@ class TaskFinalizerThread(threading.Thread):
         # currently processing, however this is fine as it doesn't affect slurm -- all the
         # running tasks have been aborted already -- this thread is just for already
         # finished tasks.
+        getlogger().debug('aborting: joining finalizer thread with timeout 5 seconds...')
         self.join(timeout=5.0)
+        
+        if self._current_task is not None:
+            # Abort the currently finalizing task.
+            self._current_task.abort(cause)
 
-    def _finalize_task(self, task):
+    def _finalize_current_task(self):
         if not self._policy.skip_sanity_check:
-            task.sanity()
+            self._current_task.sanity()
 
         if not self._policy.skip_performance_check:
-            task.performance()
+            self._current_task.performance()
 
-        task.cleanup(not self._policy.keep_stage_files, False)
+        self._current_task.cleanup(not self._policy.keep_stage_files, False)
+        self._current_task = None
 
     def num_retired_tasks(self):
         """Returns the number of tasks still to be finalized."""
@@ -176,7 +183,7 @@ class TaskFinalizerThread(threading.Thread):
                 if n:
                     getlogger().debug('retired queue: %d task(s)' % n)
                 try:
-                    task = self._retired_tasks.get(True, timeout=0.5)
+                    self._current_task = self._retired_tasks.get(True, timeout=0.5)
                 except queue.Empty:
                     if self._stop_when_done_event.is_set():
                         break  # Break -- no more tasks to come
@@ -184,9 +191,9 @@ class TaskFinalizerThread(threading.Thread):
                         continue  # Retry
 
                 # Finalize task
-                getlogger().debug('finalizing task: %s' % task.check.info())
+                getlogger().debug('finalizing task: %s' % self._current_task.check.info())
                 try:
-                    self._finalize_task(task)
+                    self._finalize_current_task()
                 except TaskExit:
                     pass
 
