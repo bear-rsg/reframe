@@ -142,15 +142,15 @@ class TaskFinalizerThread(threading.Thread):
             
             task.abort(cause)
         
-        # Give thread 5 seconds to exit.
+        # Give thread 1 second to exit.
         # Since the thread is a daemon, when the python process exits, the thread should
         # abort.
         # This will stop some cleanup code from running for the task that the thread is
         # currently processing, however this is fine as it doesn't affect slurm -- all the
         # running tasks have been aborted already -- this thread is just for already
         # finished tasks.
-        getlogger().debug('aborting: joining finalizer thread with timeout 5 seconds...')
-        self.join(timeout=5.0)
+        getlogger().debug('aborting: joining finalizer thread with timeout 1 second...')
+        self.join(timeout=1.0)
         
         if self._current_task is not None:
             # Abort the currently finalizing task.
@@ -173,8 +173,9 @@ class TaskFinalizerThread(threading.Thread):
     def retire_task(self, task):
         """Adds a task to the retiring queue."""
         getlogger().debug('retiring task: %s' % task.check.info())
-        getlogger().debug('retired queue: %d task(s)' % self.num_retired_tasks())
+        getlogger().debug('retired queue before retiring task: %d task(s)' % self.num_retired_tasks())
         self._retired_tasks.put(task)
+        getlogger().debug('retired queue after: %d task(s)' % self.num_retired_tasks())
 
     def run(self):
         try:
@@ -186,6 +187,7 @@ class TaskFinalizerThread(threading.Thread):
                     self._current_task = self._retired_tasks.get(True, timeout=0.5)
                 except queue.Empty:
                     if self._stop_when_done_event.is_set():
+                        self._stop_when_done_event.clear()
                         break  # Break -- no more tasks to come
                     else:
                         continue  # Retry
@@ -207,13 +209,12 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
 
         # All currently running tasks
         self._running_tasks = []
-        
-        # Task finalizer thread
-        self._finalizer_thread = TaskFinalizerThread(self)
-        self._finalizer_thread.start()
 
         # Counts of running tasks per partition
         self._running_tasks_counts = {}
+
+        # Finalizer thread
+        self._finalizer_thread = None
 
         # Ready tasks to be executed per partition
         self._ready_tasks = {}
@@ -252,6 +253,11 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
     def on_task_exit(self, task):
         task.wait()
         self._remove_from_running(task)
+        
+        # Initialize finalizer thread if not done so already
+        if self._finalizer_thread is None:
+            self._finalizer_thread = TaskFinalizerThread(self)
+            self._finalizer_thread.start()
         self._finalizer_thread.retire_task(task)
 
     def enter_partition(self, c, p):
@@ -318,7 +324,8 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
             for task in ready_list:
                 task.abort(cause)
 
-        self._finalizer_thread.abort_retired(cause)
+        if self._finalizer_thread is not None:
+            self._finalizer_thread.abort_retired(cause)
 
     def _reschedule(self, task, load_env=True):
         getlogger().debug('scheduling test case for running')
@@ -352,7 +359,7 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
     def exit(self):
         self.printer.separator('short single line',
                                'waiting for spawned checks to finish')
-        pollrate = PollRateFunction(0.2, 60)
+        pollrate = PollRateFunction(1.0, 60)
         num_polls = 0
         t_start = datetime.now()
         try:
@@ -378,7 +385,9 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
                     pass
 
             getlogger().debug('run all tasks. finalizing tasks...')
-            self._finalizer_thread.finalize_tasks()
+            if self._finalizer_thread is not None:
+                self._finalizer_thread.finalize_tasks()
+            self._finalizer_thread = None
 
         except ABORT_REASONS as e:
             self._failall(e)
