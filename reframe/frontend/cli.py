@@ -92,6 +92,9 @@ def main():
         '-t', '--tag', action='append', dest='tags', default=[],
         help='Select checks matching TAG')
     select_options.add_argument(
+        '-e', '--exclude-tag', action='append', dest='exclude_tags', default=[],
+        help='Exclude checks with any TAG')
+    select_options.add_argument(
         '-n', '--name', action='append', dest='names', default=[],
         metavar='NAME', help='Select checks with NAME')
     select_options.add_argument(
@@ -379,6 +382,12 @@ def main():
             )
 
         # Filter checks by tags
+        exclude_tags = set(options.exclude_tags)
+        checks_matched = filter(
+            lambda c: c if exclude_tags.isdisjoint(c.tags) else None,
+            checks_matched
+        )
+
         user_tags = set(options.tags)
         checks_matched = filter(
             lambda c: c if user_tags.issubset(c.tags) else None,
