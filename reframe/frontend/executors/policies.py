@@ -248,7 +248,10 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
         self.printer.status('FAIL', task.check.info(), just='right')
 
     def on_task_success(self, task):
-        self.printer.status('OK', task.check.info(), just='right')
+        if task.cancelled():
+            self.printer.status('CANCEL', task.check.info(), just='right')
+        else:
+            self.printer.status('OK', task.check.info(), just='right')
 
     def on_task_exit(self, task):
         task.wait()

@@ -18,7 +18,7 @@ class SlurmJobState(sched.JobState):
 
 # Slurm Job states
 SLURM_JOB_BOOT_FAIL   = SlurmJobState('BOOT_FAIL')
-SLURM_JOB_CANCELLED   = SlurmJobState('CANCELLED')
+SLURM_JOB_CANCELLED   = SlurmJobState('CANCELLED', is_cancel=True)
 SLURM_JOB_COMPLETED   = SlurmJobState('COMPLETED')
 SLURM_JOB_CONFIGURING = SlurmJobState('CONFIGURING')
 SLURM_JOB_COMPLETING  = SlurmJobState('COMPLETING')
