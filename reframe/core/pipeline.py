@@ -1075,6 +1075,11 @@ class RegressionTest:
         :arg unload_env: If :class:`True`, the environment that was used to run
             this test will be unloaded.
         """
+        if unload_env:
+            self.logger.debug("unloading test's environment")
+            self._current_environ.unload()
+            self._current_partition.local_env.unload()
+
         aliased = os.path.samefile(self._stagedir, self._outputdir)
         if aliased:
             self.logger.debug('skipping copy to output dir '
@@ -1085,11 +1090,6 @@ class RegressionTest:
         if remove_files:
             self.logger.debug('removing stage directory')
             shutil.rmtree(self._stagedir)
-
-        if unload_env:
-            self.logger.debug("unloading test's environment")
-            self._current_environ.unload()
-            self._current_partition.local_env.unload()
 
     def __str__(self):
         return ('%s (found in %s)\n'
