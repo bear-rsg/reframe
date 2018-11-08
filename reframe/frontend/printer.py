@@ -81,7 +81,7 @@ class PrettyPrinter:
 
         if self.colorize:
             status_stripped = status.strip().lower()
-            if status_stripped == 'skip':
+            if status_stripped in ['skip', 'cancel', 'canceled', 'cancelled']:
                 status = AnsiColorizer.colorize(status, AnsiColorizer.yellow)
             elif status_stripped in ['fail', 'failed']:
                 status = AnsiColorizer.colorize(status, AnsiColorizer.red)
@@ -90,8 +90,10 @@ class PrettyPrinter:
 
         self._logger.log(level, '[ %s ] %s' % (status, message))
 
-    def result(self, check, partition, environ, success):
-        if success:
+    def result(self, check, partition, environ, success, cancelled=False):
+        if cancelled:
+            result_str = 'CANCEL'
+        elif success:
             result_str = 'OK'
         else:
             result_str = 'FAIL'

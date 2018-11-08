@@ -11,8 +11,9 @@ from reframe.core.launchers import JobLauncher
 from reframe.core.runtime import runtime
 
 class JobState:
-    def __init__(self, state):
+    def __init__(self, state, is_cancel=False):
         self._state = state
+        self._is_cancel = is_cancel
 
     def __repr__(self):
         return debug.repr(self)
@@ -25,6 +26,10 @@ class JobState:
 
     def __str__(self):
         return self._state
+
+    @property
+    def is_cancel(self):
+        return self._is_cancel
 
 
 class Job(abc.ABC):
@@ -118,6 +123,7 @@ class Job(abc.ABC):
         self._jobid = None
         self._exitcode = None
         self._state = None
+        self._cancelled = False
 
     def __repr__(self):
         return debug.repr(self)
@@ -134,6 +140,13 @@ class Job(abc.ABC):
     @property
     def state(self):
         return self._state
+
+    @property
+    def cancelled(self):
+        try:
+            return self._cancelled or self._state.is_cancel
+        except KeyError:
+            return False
 
     @property
     def name(self):
@@ -262,6 +275,8 @@ class Job(abc.ABC):
     def cancel(self):
         if self._jobid is None:
             raise JobNotStartedError('cannot cancel an unstarted job')
+        else:
+            self._cancelled = True
 
     @abc.abstractmethod
     def finished(self):
