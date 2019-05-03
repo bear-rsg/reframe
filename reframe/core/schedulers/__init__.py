@@ -280,7 +280,8 @@ class Job(abc.ABC):
         if self._jobid is None:
             raise JobNotStartedError('cannot cancel an unstarted job')
         else:
-            self._cancel_reason = reason
+            if reason is not None:
+                self._cancel_reason = reason
             self._cancelled = True
 
     @abc.abstractmethod
