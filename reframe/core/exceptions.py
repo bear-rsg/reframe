@@ -188,6 +188,10 @@ class JobError(ReframeError):
 
 class JobBlockedError(JobError):
     """Raised by job schedulers when a job is blocked indefinitely."""
+    def __init__(self, *args, reason=None, reason_details=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.reason = reason
+        self.reason_details = reason_details
 
 
 class JobNotStartedError(JobError):

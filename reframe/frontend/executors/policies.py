@@ -12,6 +12,19 @@ from reframe.frontend.executors import (ExecutionPolicy, RegressionTask,
                                         TaskEventListener, ABORT_REASONS)
 
 
+def print_result(printer, task):
+    if task.failed:
+        printer.status('FAIL', task.check.info(), just='right')
+    else:
+        if task.cancelled:
+            if hasattr(task.check, 'cancel_reason') and task.check.cancel_reason is not None:
+                printer.status('CANCEL', task.check.info() + ' (cancelled due to ' + task.check.cancel_reason + ')', just='right')
+            else:
+                printer.status('CANCEL', task.check.info(), just='right')
+        else:
+            printer.status('OK', task.check.info(), just='right')
+
+
 class SerialExecutionPolicy(ExecutionPolicy):
     def __init__(self):
         super().__init__()
@@ -59,8 +72,7 @@ class SerialExecutionPolicy(ExecutionPolicy):
         except BaseException:
             task.fail(sys.exc_info())
         finally:
-            self.printer.status('FAIL' if task.failed else 'OK',
-                                task.check.info(), just='right')
+            print_result(self.printer, task)
 
 
 class PollRateFunction:
@@ -245,13 +257,10 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
 
     def on_task_failure(self, task):
         self._remove_from_running(task)
-        self.printer.status('FAIL', task.check.info(), just='right')
+        print_result(self.printer, task)
 
     def on_task_success(self, task):
-        if task.cancelled():
-            self.printer.status('CANCEL', task.check.info(), just='right')
-        else:
-            self.printer.status('OK', task.check.info(), just='right')
+        print_result(self.printer, task)
 
     def on_task_exit(self, task):
         task.wait()
