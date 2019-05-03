@@ -106,8 +106,8 @@ class PbsJob(sched.Job):
         while not self.finished():
             time.sleep(next(intervals))
 
-    def cancel(self):
-        super().cancel()
+    def cancel(self, reason=None):
+        super().cancel(reason=reason)
 
         # Recreate the full job id
         jobid = str(self._jobid)

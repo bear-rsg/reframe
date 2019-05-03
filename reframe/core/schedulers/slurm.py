@@ -299,7 +299,7 @@ class SlurmJob(sched.Job):
             self._update_state()
 
     def cancel(self, reason=None):
-        super().cancel(reason=None)
+        super().cancel(reason=reason)
         getlogger().debug('cancelling job (id=%s)' % self._jobid)
         self._run_command('scancel %s' % self._jobid,
                           settings().job_submit_timeout)

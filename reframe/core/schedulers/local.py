@@ -102,7 +102,7 @@ class LocalJob(sched.Job):
                 'pid %s already dead or assigned elsewhere' % self._jobid)
             return
 
-    def cancel(self):
+    def cancel(self, reason=None):
         """Cancel job.
 
         The SIGTERM signal will be sent first to all the processes of this job
@@ -110,7 +110,7 @@ class LocalJob(sched.Job):
 
         This function waits for the spawned process tree to finish.
         """
-        super().cancel()
+        super().cancel(reason=reason)
         self._term_all()
 
         # Set the time limit to the grace period and let wait() do the final
