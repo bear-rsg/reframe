@@ -123,6 +123,7 @@ class Job(abc.ABC):
         self._exitcode = None
         self._state = None
         self._cancelled = False
+        self._cancel_reason = None
 
     def __repr__(self):
         return debug.repr(self)
@@ -146,6 +147,10 @@ class Job(abc.ABC):
             return self._cancelled or self._state.is_cancel
         except KeyError:
             return False
+
+    @property
+    def cancel_reason(self):
+        return self._cancel_reason
 
     @property
     def name(self):
@@ -271,10 +276,11 @@ class Job(abc.ABC):
             raise JobNotStartedError('cannot wait an unstarted job')
 
     @abc.abstractmethod
-    def cancel(self):
+    def cancel(self, reason=None):
         if self._jobid is None:
             raise JobNotStartedError('cannot cancel an unstarted job')
         else:
+            self._cancel_reason = reason
             self._cancelled = True
 
     @abc.abstractmethod

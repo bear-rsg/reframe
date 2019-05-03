@@ -16,9 +16,10 @@ def print_result(printer, task):
     if task.failed:
         printer.status('FAIL', task.check.info(), just='right')
     else:
-        if task.cancelled:
-            if hasattr(task.check, 'cancel_reason') and task.check.cancel_reason is not None:
-                printer.status('CANCEL', task.check.info() + ' (cancelled due to ' + task.check.cancel_reason + ')', just='right')
+        if task.cancelled():
+            reason = task.cancel_reason()
+            if reason is not None:
+                printer.status('CANCEL', task.check.info() + ' (' + reason + ')', just='right')
             else:
                 printer.status('CANCEL', task.check.info(), just='right')
         else:

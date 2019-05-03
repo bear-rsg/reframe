@@ -107,6 +107,9 @@ class RegressionTask:
     def cancelled(self):
         return self._check.job.cancelled
 
+    def cancel_reason(self):
+        return self._check.job.cancel_reason
+
     def abort(self, cause=None):
         logging.getlogger().debug('aborting: %s' % self._check.info())
         exc = AbortTaskError()
