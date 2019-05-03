@@ -68,9 +68,7 @@ class SlurmJob(sched.Job):
                                 'QOSJobLimit',
                                 'QOSResourceLimit',
                                 'ReqNodeNotAvail',
-                                'QOSUsageThreshold',
-                                'BadConstraints',
-                                'PartitionConfig']
+                                'QOSUsageThreshold']
         self._is_cancelling = False
         self._update_state_count = 0
 
@@ -279,13 +277,13 @@ class SlurmJob(sched.Job):
                 if re.match(r'UnavailableNodes:$', reason_details.strip()):
                     return
 
-            self.cancel()
+            self.cancel(reason=reason)
             reason_msg = ('job cancelled because it was blocked due to '
                           'a perhaps non-recoverable reason: ' + reason)
             if reason_details is not None:
                 reason_msg += ', ' + reason_details
 
-            raise JobBlockedError(reason_msg, reason=reason, reason_details=reason_details, jobid=self._jobid)
+            raise JobBlockedError(reason_msg, jobid=self._jobid)
 
     def wait(self):
         super().wait()
@@ -300,8 +298,8 @@ class SlurmJob(sched.Job):
             time.sleep(next(intervals))
             self._update_state()
 
-    def cancel(self):
-        super().cancel()
+    def cancel(self, reason=None):
+        super().cancel(reason=None)
         getlogger().debug('cancelling job (id=%s)' % self._jobid)
         self._run_command('scancel %s' % self._jobid,
                           settings().job_submit_timeout)
@@ -370,11 +368,11 @@ class SqueueJob(SlurmJob):
         if not self._is_cancelling and self._state in self._pending_states:
             self._check_and_cancel(reason)
 
-    def cancel(self):
+    def cancel(self, reason=None):
         # There is no reliable way to get the state of the job after it has
         # finished, so we explicitly mark it as cancelled here. The
         # _update_state() will make sure to return the approriate state.
-        super().cancel()
+        super().cancel(reason=reason)
         self._cancelled = True
 
 
