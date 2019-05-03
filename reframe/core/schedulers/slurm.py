@@ -68,7 +68,9 @@ class SlurmJob(sched.Job):
                                 'QOSJobLimit',
                                 'QOSResourceLimit',
                                 'ReqNodeNotAvail',
-                                'QOSUsageThreshold']
+                                'QOSUsageThreshold',
+                                'BadConstraints',
+                                'PartitionConfig']
         self._is_cancelling = False
         self._update_state_count = 0
 
@@ -264,9 +266,11 @@ class SlurmJob(sched.Job):
         # "ReqNodeNotAvail, UnavailableNodes:nid00[408,411-415]"
         try:
             reason, reason_details = reason_descr.split(',', maxsplit=1)
+            reason_details = reason_details.strip()
         except ValueError:
             # no reason details
             reason, reason_details = reason_descr, None
+        reason = reason.strip()
 
         if reason in self._cancel_reasons:
             # Here we handle the case were the UnavailableNodes list is empty,
@@ -281,7 +285,7 @@ class SlurmJob(sched.Job):
             if reason_details is not None:
                 reason_msg += ', ' + reason_details
 
-            raise JobBlockedError(reason_msg, jobid=self._jobid)
+            raise JobBlockedError(reason_msg, reason=reason, reason_details=reason_details, jobid=self._jobid)
 
     def wait(self):
         super().wait()
