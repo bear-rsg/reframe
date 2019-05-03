@@ -11,9 +11,8 @@ from reframe.core.launchers import JobLauncher
 from reframe.core.runtime import runtime
 
 class JobState:
-    def __init__(self, state, is_cancel=False):
+    def __init__(self, state):
         self._state = state
-        self._is_cancel = is_cancel
 
     def __repr__(self):
         return debug.repr(self)
@@ -29,7 +28,7 @@ class JobState:
 
     @property
     def is_cancel(self):
-        return self._is_cancel
+        return False
 
 
 class Job(abc.ABC):
