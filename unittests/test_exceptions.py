@@ -50,7 +50,7 @@ class TestExceptions(unittest.TestCase):
         exc_args = ('foo bar', 'partial output', 'error message', 1)
         e = exc.SpawnedProcessError(*exc_args)
         self.assertRaisesRegex(exc.ReframeError,
-                               r"Command 'foo bar' failed with exit code 1:\n"
+                               r"command 'foo bar' failed with exit code 1:\n"
                                r"=== STDOUT ===\n"
                                r'partial output\n'
                                r"=== STDERR ===\n"
@@ -62,7 +62,7 @@ class TestExceptions(unittest.TestCase):
         exc_args = ('foo bar', '', 'error message', 1)
         e = exc.SpawnedProcessError(*exc_args)
         self.assertRaisesRegex(exc.ReframeError,
-                               r"Command 'foo bar' failed with exit code 1:\n"
+                               r"command 'foo bar' failed with exit code 1:\n"
                                r"=== STDOUT ===\n"
                                r"=== STDERR ===\n"
                                r"error message",
@@ -72,7 +72,7 @@ class TestExceptions(unittest.TestCase):
         exc_args = ('foo bar', 'partial output', '', 1)
         e = exc.SpawnedProcessError(*exc_args)
         self.assertRaisesRegex(exc.ReframeError,
-                               r"Command 'foo bar' failed with exit code 1:\n"
+                               r"command 'foo bar' failed with exit code 1:\n"
                                r"=== STDOUT ===\n"
                                r'partial output\n'
                                r"=== STDERR ===",
@@ -82,7 +82,7 @@ class TestExceptions(unittest.TestCase):
         exc_args = ('foo bar', 'partial output', 'partial error', 10)
         e = exc.SpawnedProcessTimeout(*exc_args)
         self.assertRaisesRegex(exc.ReframeError,
-                               r"Command 'foo bar' timed out after 10s:\n"
+                               r"command 'foo bar' timed out after 10s:\n"
                                r"=== STDOUT ===\n"
                                r'partial output\n'
                                r"=== STDERR ===\n"
@@ -94,7 +94,7 @@ class TestExceptions(unittest.TestCase):
         exc_args = ('foo bar', '', 'partial error', 10)
         e = exc.SpawnedProcessTimeout(*exc_args)
         self.assertRaisesRegex(exc.ReframeError,
-                               r"Command 'foo bar' timed out after 10s:\n"
+                               r"command 'foo bar' timed out after 10s:\n"
                                r"=== STDOUT ===\n"
                                r"=== STDERR ===\n"
                                r"partial error",
@@ -104,7 +104,7 @@ class TestExceptions(unittest.TestCase):
         exc_args = ('foo bar', 'partial output', '', 10)
         e = exc.SpawnedProcessTimeout(*exc_args)
         self.assertRaisesRegex(exc.ReframeError,
-                               r"Command 'foo bar' timed out after 10s:\n"
+                               r"command 'foo bar' timed out after 10s:\n"
                                r"=== STDOUT ===\n"
                                r'partial output\n'
                                r"=== STDERR ===",
@@ -114,7 +114,7 @@ class TestExceptions(unittest.TestCase):
         exc_args = ('some error',)
         e = exc.JobError(*exc_args, jobid=1234)
         self.assertEqual(1234, e.jobid)
-        self.assertRaisesRegex(exc.JobError, r'\(jobid=1234\) some error',
+        self.assertRaisesRegex(exc.JobError, r'\[jobid=1234\] some error',
                                raise_exc, e)
         self.assertEqual(exc_args, e.args)
 
@@ -125,7 +125,7 @@ class TestExceptions(unittest.TestCase):
             except ValueError as e:
                 raise exc.JobError('some error', jobid=1234) from e
         except exc.JobError as e:
-            self.assertEqual('(jobid=1234) some error: random value error',
+            self.assertEqual('[jobid=1234] some error: random value error',
                              str(e))
 
     def test_reraise_job_error_no_message(self):
@@ -135,5 +135,5 @@ class TestExceptions(unittest.TestCase):
             except ValueError as e:
                 raise exc.JobError(jobid=1234) from e
         except exc.JobError as e:
-            self.assertEqual('(jobid=1234): random value error',
+            self.assertEqual('[jobid=1234]: random value error',
                              str(e))

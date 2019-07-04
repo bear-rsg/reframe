@@ -97,22 +97,26 @@ The valid attributes of a system are the following:
 * ``modules_system``: The modules system that should be used for loading environment modules on this system (default :class:`None`).
   Three types of modules systems are currently supported:
 
-  - ``tmod``: The classic Tcl implementation of the `environment modules <https://sourceforge.net/projects/modules/files/Modules/modules-3.2.10/>`__.
-  - ``tmod4``: The version 4 of the Tcl implementation of the `environment modules <http://modules.sourceforge.net/>`__.
+  - ``tmod``: The classic Tcl implementation of the `environment modules <https://sourceforge.net/projects/modules/files/Modules/modules-3.2.10/>`__ (versions older than 3.2 are not supported).
+  - ``tmod4``: The version 4 of the Tcl implementation of the `environment modules <http://modules.sourceforge.net/>`__ (versions older than 4.1 are not supported).
   - ``lmod``: The Lua implementation of the `environment modules <https://lmod.readthedocs.io/en/latest/>`__.
 * ``prefix``: Default regression prefix for this system (default ``.``).
 * ``stagedir``: Default stage directory for this system (default :class:`None`).
 * ``outputdir``: Default output directory for this system (default :class:`None`).
-* ``logdir``: Default performance logging directory for this system (default :class:`None`).
+* ``perflogdir``: Default directory prefix for storing performance logs for this system (default :class:`None`).
 * ``resourcesdir``: Default directory for storing large resources (e.g., input data files, etc.) needed by regression tests for this system (default ``.``).
 * ``partitions``: A set of key/value pairs defining the partitions of this system and their properties (default ``{}``).
   Partition configuration is discussed in the `next section <#partition-configuration>`__.
+
+For a more detailed description of the ``prefix``, ``stagedir``, ``outputdir`` and ``perflogdir`` directories, please refer to the `"Configuring ReFrame Directories" <running.html#configuring-reframe-directories>`__ and `"Performance Logging" <running.html#performance-logging>`__ sections.
 
 .. note::
   .. versionadded:: 2.8
     The ``modules_system`` key was introduced for specifying custom modules systems for different systems.
 
-For a more detailed description of the ``prefix``, ``stagedir``, ``outputdir`` and ``logdir`` directories, please refer to the `"Running ReFrame" <running.html#configuring-reframe-directories>`__ section.
+.. warning::
+   .. versionchanged:: 2.18
+    The ``logdir`` key is no more supported; please use ``perflogdir`` instead.
 
 Partition Configuration
 -----------------------
@@ -301,8 +305,11 @@ The possible attributes of an environment are the following:
 * ``fflags``: The default Fortran compiler flags (default :class:`None`, valid for ``'ProgEnvironment'`` only).
 * ``ldflags``: The default linker flags (default :class:`None`, valid for ``'ProgEnvironment'`` only).
 
-.. note:: When defining programming environment flags, :class:`None` is treated differently from ``''`` for regression tests that are compiled through a Makefile.
-   If a flags variable is not :class:`None` it will be passed to the Makefile, which may affect the compilation process.
+.. note::
+   All flags for programming environments are now defined as list of strings instead of simple strings.
+
+   .. versionchanged:: 2.17
+
 
 System Auto-Detection
 ---------------------
@@ -314,3 +321,18 @@ If this cannot be found the hostname will be obtained from the standard ``hostna
 The detection process stops at the first match found, and the system it belongs to is considered as the current system.
 If the system cannot be auto-detected, ReFrame will fail with an error message.
 You can override completely the auto-detection process by specifying a system or a system partition with the ``--system`` option (e.g., ``--system daint`` or ``--system daint:gpu``).
+
+
+Showing configuration
+---------------------
+
+.. versionadded:: 2.16
+
+It is possible to ask ReFrame to print the configuration of the current system or the configuration of any programming environment defined for the current system.
+There are two command-line options for performing these operations:
+
+* ``--show-config``: This option shows the current system's configuration and exits.
+  It can be combined with the ``--system`` option in order to show the configuration of another system.
+* ``--show-config-env ENV``: This option shows the configuration of the programming environment ``ENV`` and exits.
+  The environment ``ENV`` must be defined for any of the partitions of the current system.
+  This option can also be combined with ``--system`` in order to show the configuration of a programming environment defined for another system.

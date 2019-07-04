@@ -1,14 +1,14 @@
 import os
-import shutil
 import tempfile
 import unittest
 
 import reframe.core.runtime as rt
+import reframe.utility.os_ext as os_ext
 import reframe.utility.sanity as sn
 import unittests.fixtures as fixtures
-from reframe.core.exceptions import (ReframeError, ReframeSyntaxError,
-                                     PipelineError, SanityError,
-                                     CompilationError)
+from reframe.core.exceptions import (BuildError, PipelineError, ReframeError,
+                                     ReframeSyntaxError, PerformanceError,
+                                     SanityError)
 from reframe.core.pipeline import (CompileOnlyRegressionTest, RegressionTest,
                                    RunOnlyRegressionTest)
 from reframe.frontend.loader import RegressionCheckLoader
@@ -32,12 +32,14 @@ class TestRegressionTest(unittest.TestCase):
 
     def setUp(self):
         self.setup_local_execution()
-        self.resourcesdir = tempfile.mkdtemp(dir='unittests')
         self.loader = RegressionCheckLoader(['unittests/resources/checks'])
 
+        # Set runtime prefix
+        rt.runtime().resources.prefix = tempfile.mkdtemp(dir='unittests')
+
     def tearDown(self):
-        shutil.rmtree(self.resourcesdir, ignore_errors=True)
-        shutil.rmtree('.rfm_testing', ignore_errors=True)
+        os_ext.rmtree(rt.runtime().resources.prefix)
+        os_ext.rmtree('.rfm_testing', ignore_errors=True)
 
     def replace_prefix(self, filename, new_prefix):
         basename = os.path.basename(filename)
@@ -68,11 +70,9 @@ class TestRegressionTest(unittest.TestCase):
         test.local = True
 
         test.setup(self.partition, self.progenv)
-        for m in test.modules:
-            self.assertTrue(rt.runtime().modules_system.is_module_loaded(m))
 
-        for k, v in test.variables.items():
-            self.assertEqual(os.environ[k], v)
+        for k in test.variables.keys():
+            self.assertNotIn(k, os.environ)
 
         # Manually unload the environment
         self.progenv.unload()
@@ -80,6 +80,7 @@ class TestRegressionTest(unittest.TestCase):
     def _run_test(self, test, compile_only=False):
         test.setup(self.partition, self.progenv)
         test.compile()
+        test.compile_wait()
         test.run()
         test.wait()
         test.check_sanity()
@@ -117,9 +118,10 @@ class TestRegressionTest(unittest.TestCase):
         test.valid_prog_environs = [self.progenv.name]
 
         # Test also the prebuild/postbuild functionality
-        test.prebuild_cmd  = ['touch prebuild']
-        test.postbuild_cmd = ['touch postbuild']
-        test.keepfiles = ['prebuild', 'postbuild']
+        test.prebuild_cmd  = ['touch prebuild', 'mkdir prebuild_dir']
+        test.postbuild_cmd = ['touch postbuild', 'mkdir postbuild_dir']
+        test.keep_files = ['prebuild', 'postbuild',
+                           'prebuild_dir', 'postbuild_dir']
 
         # Force local execution of the test
         test.local = True
@@ -193,13 +195,15 @@ class TestRegressionTest(unittest.TestCase):
         test.valid_prog_environs = ['*']
         test.valid_systems = ['*']
         test.setup(self.partition, self.progenv)
-        self.assertRaises(CompilationError, test.compile)
+        test.compile()
+        self.assertRaises(BuildError, test.compile_wait)
 
     def test_compile_only_warning(self):
         test = CompileOnlyRegressionTest('compileonlycheckwarning',
                                          'unittests/resources/checks')
-        test.sourcepath = 'compiler_warning.c'
-        self.progenv.cflags = '-Wall'
+        test.build_system = 'SingleSource'
+        test.build_system.srcfile = 'compiler_warning.c'
+        test.build_system.cflags = ['-Wall']
         test.valid_prog_environs = ['*']
         test.valid_systems = ['*']
         test.sanity_patterns = sn.assert_found(r'warning', test.stderr)
@@ -249,12 +253,6 @@ class TestRegressionTest(unittest.TestCase):
         self.assertTrue(test.supports_environ('foo-env'))
         self.assertTrue(test.supports_environ('*'))
 
-        test.valid_prog_environs = ['PrgEnv-foo-*']
-        self.assertTrue(test.supports_environ('PrgEnv-foo-version1'))
-        self.assertTrue(test.supports_environ('PrgEnv-foo-version2'))
-        self.assertFalse(test.supports_environ('PrgEnv-boo-version1'))
-        self.assertFalse(test.supports_environ('Prgenv-foo-version1'))
-
     def test_sourcesdir_none(self):
         test = RegressionTest('hellocheck', 'unittests/resources/checks')
         test.sourcesdir = None
@@ -283,7 +281,7 @@ class TestRegressionTest(unittest.TestCase):
         test.sourcesdir = None
         test.valid_prog_environs = ['*']
         test.valid_systems = ['*']
-        self.assertRaises(CompilationError, self._run_test, test)
+        self.assertRaises(BuildError, self._run_test, test)
 
     def test_sourcesdir_none_run_only(self):
         test = RunOnlyRegressionTest('hellocheck',
@@ -473,7 +471,7 @@ class TestSanityPatterns(unittest.TestCase):
         self.output_file.close()
         os.remove(self.perf_file.name)
         os.remove(self.output_file.name)
-        shutil.rmtree(self.resourcesdir)
+        os_ext.rmtree(self.resourcesdir)
 
     def write_performance_output(self, fp=None, **kwargs):
         if not fp:
@@ -548,7 +546,7 @@ class TestSanityPatterns(unittest.TestCase):
         self.output_file.write('result = success\n')
         self.output_file.close()
         self.test.check_sanity()
-        self.assertRaises(SanityError, self.test.check_performance)
+        self.assertRaises(PerformanceError, self.test.check_performance)
 
     def test_unknown_tag(self):
         self.test.reference = {
@@ -605,3 +603,39 @@ class TestSanityPatterns(unittest.TestCase):
             }
         }
         self.test.check_performance()
+
+    def test_perf_var_evaluation(self):
+        # All performance values must be evaluated, despite the first one
+        # failing To test this, we need an extract function that will have a
+        # side effect when evaluated, whose result we will check after calling
+        # `check_performance()`.
+        logfile = 'perf.log'
+
+        @sn.sanity_function
+        def extract_perf(patt, tag):
+            val = sn.evaluate(
+                sn.extractsingle(patt, self.perf_file.name, tag, float))
+
+            with open('perf.log', 'a') as fp:
+                fp.write('%s=%s' % (tag, val))
+
+            return val
+
+        self.test.perf_patterns = {
+            'value1': extract_perf(r'performance1 = (?P<v1>\S+)', 'v1'),
+            'value2': extract_perf(r'performance2 = (?P<v2>\S+)', 'v2'),
+            'value3': extract_perf(r'performance3 = (?P<v3>\S+)', 'v3')
+        }
+        self.write_performance_output(performance1=1.0,
+                                      performance2=1.8,
+                                      performance3=3.3)
+        with self.assertRaises(PerformanceError) as cm:
+            self.test.check_performance()
+
+        logfile = os.path.join(self.test.stagedir, logfile)
+        with open(logfile) as fp:
+            log_output = fp.read()
+
+        self.assertIn('v1', log_output)
+        self.assertIn('v2', log_output)
+        self.assertIn('v3', log_output)

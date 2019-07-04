@@ -13,7 +13,7 @@ from datetime import datetime
 import reframe.core.schedulers as sched
 import reframe.utility.os_ext as os_ext
 from reframe.core.config import settings
-from reframe.core.exceptions import (SpawnedProcessError, JobError)
+from reframe.core.exceptions import SpawnedProcessError, JobError
 from reframe.core.logging import getlogger
 from reframe.core.schedulers.registry import register_scheduler
 
@@ -27,13 +27,13 @@ PBS_OUTPUT_WRITEBACK_WAIT = 3
 class PbsJob(sched.Job):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._prefix  = '#PBS'
+        self._prefix = '#PBS'
         self._time_finished = None
 
         # Optional part of the job id refering to the PBS server
         self._pbs_server = None
 
-    def _emit_lselect_option(self, builder):
+    def _emit_lselect_option(self):
         num_tasks_per_node = self._num_tasks_per_node or 1
         num_cpus_per_task = self._num_cpus_per_task or 1
         num_nodes = self._num_tasks // num_tasks_per_node
@@ -45,7 +45,7 @@ class PbsJob(sched.Job):
         # Options starting with `-` are emitted in separate lines
         rem_opts = []
         verb_opts = []
-        for opt in self.options:
+        for opt in (*self.sched_access, *self.options):
             if opt.startswith('-'):
                 rem_opts.append(opt)
             elif opt.startswith('#'):
@@ -53,15 +53,12 @@ class PbsJob(sched.Job):
             else:
                 select_opt += ':' + opt
 
-        self._emit_job_option(select_opt, builder)
-        for opt in rem_opts:
-            self._emit_job_option(opt, builder)
+        return [self._format_option(select_opt),
+                *(self._format_option(opt) for opt in rem_opts),
+                *verb_opts]
 
-        for opt in verb_opts:
-            builder.verbatim(opt)
-
-    def _emit_job_option(self, option, builder):
-        builder.verbatim(self._prefix + ' ' + option)
+    def _format_option(self, option):
+        return self._prefix + ' ' + option
 
     def _run_command(self, cmd, timeout=None):
         """Run command cmd and re-raise any exception as a JobError."""
@@ -70,19 +67,33 @@ class PbsJob(sched.Job):
         except SpawnedProcessError as e:
             raise JobError(jobid=self._jobid) from e
 
-    def emit_preamble(self, builder):
-        self._emit_job_option('-N "%s"' % self.name, builder)
-        self._emit_lselect_option(builder)
-        self._emit_job_option('-l walltime=%d:%d:%d' % self.time_limit,
-                              builder)
-        if self.sched_partition:
-            self._emit_job_option('-q %s' % self.sched_partition, builder)
+    def emit_preamble(self):
+        preamble = [
+            self._format_option('-N "%s"' % self.name),
+            self._format_option('-o %s' % self.stdout),
+            self._format_option('-e %s' % self.stderr),
+        ]
 
-        self._emit_job_option('-o %s' % self.stdout, builder)
-        self._emit_job_option('-e %s' % self.stderr, builder)
+        if self.time_limit is not None:
+            preamble.append(
+                self._format_option('-l walltime=%d:%d:%d' % self.time_limit))
+
+        if self.sched_partition:
+            preamble.append(
+                self._format_option('-q %s' % self.sched_partition))
+
+        preamble += self._emit_lselect_option()
 
         # PBS starts the job in the home directory by default
-        builder.verbatim('cd %s' % self.workdir)
+        preamble.append('cd %s' % self.workdir)
+        return preamble
+
+    def get_all_nodes(self):
+        raise NotImplementedError('pbs backend does not support node listing')
+
+    def filter_nodes(self, nodes, options):
+        raise NotImplementedError('pbs backend does not support '
+                                  'node filtering')
 
     def submit(self):
         # `-o` and `-e` options are only recognized in command line by the PBS
@@ -90,7 +101,7 @@ class PbsJob(sched.Job):
         cmd = 'qsub -o %s -e %s %s' % (self.stdout, self.stderr,
                                        self.script_filename)
         completed = self._run_command(cmd, settings().job_submit_timeout)
-        jobid_match = re.search('^(?P<jobid>\S+)', completed.stdout)
+        jobid_match = re.search(r'^(?P<jobid>\S+)', completed.stdout)
         if not jobid_match:
             raise JobError('could not retrieve the job id '
                            'of the submitted job')
@@ -119,7 +130,9 @@ class PbsJob(sched.Job):
 
     def finished(self):
         super().finished()
-        done = os.path.exists(self.stdout) and os.path.exists(self.stderr)
+        with os_ext.change_dir(self.workdir):
+            done = os.path.exists(self.stdout) and os.path.exists(self.stderr)
+
         if done:
             t_now = datetime.now()
             self._time_finished = self._time_finished or t_now

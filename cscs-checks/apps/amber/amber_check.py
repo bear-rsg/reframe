@@ -1,22 +1,28 @@
 import os
 
+import reframe as rfm
 import reframe.utility.sanity as sn
-from reframe.core.pipeline import RunOnlyRegressionTest
 
 
-class AmberBaseCheck(RunOnlyRegressionTest):
-    def __init__(self, name, input_file, output_file, **kwargs):
-        super().__init__(name, os.path.dirname(__file__), **kwargs)
-
-        self.valid_prog_environs = ['PrgEnv-gnu']
-
-        self.modules = ['Amber']
+class AmberBaseCheck(rfm.RunOnlyRegressionTest):
+    def __init__(self, input_file, output_file):
+        super().__init__()
 
         self.sourcesdir = os.path.join(self.current_system.resourcesdir,
                                        'Amber')
-        self.executable_opts = \
-            ('-O -i %s -o %s' % (input_file, output_file)).split()
+
+        self.valid_prog_environs = ['PrgEnv-gnu']
+        self.modules = ['Amber']
+        self.num_tasks = 1
+        self.num_tasks_per_node = 1
+        self.num_gpus_per_node = 1
+        self.executable_opts = ['-O', '-i', input_file, '-o', output_file]
         self.keep_files = [output_file]
+        self.extra_resources = {
+            'switches': {
+                'num_switches': 1
+            }
+        }
 
         energy = sn.extractsingle(r' Etot\s+=\s+(?P<energy>\S+)',
                                   output_file, 'energy', float, item=-2)
@@ -31,84 +37,58 @@ class AmberBaseCheck(RunOnlyRegressionTest):
             'perf': sn.extractsingle(r'ns/day =\s+(?P<perf>\S+)',
                                      output_file, 'perf', float, item=1)
         }
-
         self.maintainers = ['SO', 'VH']
         self.tags = {'scs'}
-        self.extra_resources = {
-            'switches': {
-                'num_switches': 1
+
+
+@rfm.required_version('>=2.16')
+@rfm.parameterized_test(*(
+    [variant, arch, scale]
+    for variant in ['prod', 'maint']
+    for arch in ['CPU', 'GPU']
+    for scale in ['small', 'large']
+    if (not (scale, arch) == ('large', 'GPU') and
+        not (variant, arch) == ('maint', 'CPU'))
+))
+class AmberCheck(AmberBaseCheck):
+    def __init__(self, variant, arch, scale):
+        super().__init__('mdin.%s' % arch, 'amber.out')
+        self.descr = 'Amber parallel %s %s check (%s)' % (scale, arch, variant)
+        self.tags |= {'maintenance' if variant == 'maint' else 'production'}
+        if arch == 'GPU':
+            self.valid_systems = ['daint:gpu', 'dom:gpu']
+            self.executable = 'pmemd.cuda.MPI'
+            self.reference = {
+                'dom:gpu': {
+                    'perf': (30.0, -0.05, None, 'ns/day')
+                },
+                'daint:gpu': {
+                    'perf': (30.0, -0.05, None, 'ns/day')
+                },
             }
-        }
+        elif arch == 'CPU':
+            self.valid_systems = ['daint:mc']
+            if scale == 'small':
+                self.valid_systems += ['dom:mc']
 
-
-class AmberGPUCheck(AmberBaseCheck):
-    def __init__(self, version, **kwargs):
-        super().__init__('amber_gpu_%s_check' % version, 'mdin.GPU',
-                         'amber.out', **kwargs)
-        self.valid_systems = ['daint:gpu', 'dom:gpu']
-        self.executable = 'pmemd.cuda.MPI'
-        self.num_tasks = 1
-        self.num_tasks_per_node = 1
-        self.num_gpus_per_node = 1
-
-
-class AmberGPUProdCheck(AmberGPUCheck):
-    def __init__(self, **kwargs):
-        super().__init__('prod', **kwargs)
-        self.descr = 'Amber parallel GPU production check'
-        self.tags |= {'production'}
-        self.reference = {
-            'dom:gpu': {
-                'perf': (22.2, -0.05, None)
-            },
-            'daint:gpu': {
-                'perf': (21.7, -0.05, None)
-            },
-        }
-
-
-class AmberGPUMaintCheck(AmberGPUCheck):
-    def __init__(self, **kwargs):
-        super().__init__('maint', **kwargs)
-        self.descr = 'Amber parallel GPU maintenance check'
-        self.tags |= {'maintenance'}
-        self.reference = {
-            'dom:gpu': {
-                'perf': (22.2, -0.05, None)
-            },
-            'daint:gpu': {
-                'perf': (21.7, -0.05, None)
-            },
-        }
-
-
-class AmberCPUCheck(AmberBaseCheck):
-    def __init__(self, **kwargs):
-        super().__init__('amber_cpu_check', 'mdin.CPU', 'amber.out', **kwargs)
-        self.descr = 'Amber parallel CPU check'
-        self.tags |= {'production'}
-        self.executable = 'pmemd.MPI'
-        self.strict_check = False
-        self.valid_systems = ['daint:mc', 'dom:mc']
-        self.modules = ['Amber']
-
-        self.reference = {
-            'dom:mc': {
-                'perf': (8.0, -0.05, None)
-            },
-            'daint:mc': {
-                'perf': (10.7, -0.25, None)
-            },
-        }
-
-        if self.current_system.name == 'dom':
-            self.num_tasks = 216
-            self.num_tasks_per_node = 36
-        else:
-            self.num_tasks = 576
-            self.num_tasks_per_node = 36
-
-
-def _get_checks(**kwargs):
-    return [AmberGPUProdCheck(**kwargs), AmberGPUMaintCheck(**kwargs),
-            AmberCPUCheck(**kwargs)]
+            self.executable = 'pmemd.MPI'
+            self.strict_check = False
+            if scale == 'small':
+                self.num_tasks = 216
+                self.num_tasks_per_node = 36
+                self.reference = {
+                    'dom:mc': {
+                        'perf': (8.0, -0.05, None, 'ns/day')
+                    },
+                    'daint:mc': {
+                        'perf': (7.6, -0.05, None, 'ns/day')
+                    }
+                }
+            else:
+                self.num_tasks = 576
+                self.num_tasks_per_node = 36
+                self.reference = {
+                    'daint:mc': {
+                        'perf': (10.7, -0.25, None, 'ns/day')
+                    }
+                }

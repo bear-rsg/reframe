@@ -9,6 +9,7 @@ from collections import OrderedDict
 
 import reframe.core.fields as fields
 import reframe.utility.os_ext as os_ext
+import reframe.utility.typecheck as types
 from reframe.core.exceptions import (ConfigError, EnvironError,
                                      SpawnedProcessError)
 
@@ -77,8 +78,8 @@ class ModulesSystem:
     modules systems implementation.
     """
 
-    module_map = fields.AggregateTypeField('module_map',
-                                           (dict, (str, (list, str))))
+    module_map = fields.TypedField('module_map',
+                                   types.Dict[str, types.List[str]])
 
     @classmethod
     def create(cls, modules_kind=None):
@@ -217,7 +218,8 @@ class ModulesSystem:
         If module ``name`` refers to multiple real modules, this method will
         return :class:`True` only if all the referees are loaded.
         """
-        return all(self._is_module_loaded(m) for m in self.resolve_module(name))
+        return all(self._is_module_loaded(m)
+                   for m in self.resolve_module(name))
 
     def _is_module_loaded(self, name):
         return self._backend.is_module_loaded(Module(name))
@@ -382,13 +384,15 @@ class ModulesSystemImpl(abc.ABC):
 class TModImpl(ModulesSystemImpl):
     """Module system for TMod (Tcl)."""
 
+    MIN_VERSION = (3, 2)
+
     def __init__(self):
         # Try to figure out if we are indeed using the TCL version
         try:
             completed = os_ext.run_command('modulecmd -V')
         except OSError as e:
             raise ConfigError(
-                'could not find a sane Tmod installation: %s' % e) from e
+                'could not find a sane TMod installation: %s' % e) from e
 
         version_match = re.search(r'^VERSION=(\S+)', completed.stdout,
                                   re.MULTILINE)
@@ -396,20 +400,32 @@ class TModImpl(ModulesSystemImpl):
                                       re.MULTILINE)
 
         if version_match is None or tcl_version_match is None:
-            raise ConfigError('could not find a sane Tmod installation')
+            raise ConfigError('could not find a sane TMod installation')
 
-        self._version = version_match.group(1)
+        version = version_match.group(1)
+        try:
+            ver_major, ver_minor, *_ = [int(v) for v in version.split('.')]
+        except ValueError:
+            raise ConfigError(
+                'could not parse TMod version string: ' + version) from None
+
+        if (ver_major, ver_minor) < self.MIN_VERSION:
+            raise ConfigError(
+                'unsupported TMod version: %s (required >= %s)' %
+                (version, self.MIN_VERSION))
+
+        self._version = version
         self._command = 'modulecmd python'
         try:
             # Try the Python bindings now
             completed = os_ext.run_command(self._command)
         except OSError as e:
             raise ConfigError(
-                'could not get the Python bindings for Tmod: ' % e) from e
+                'could not get the Python bindings for TMod: ' % e) from e
 
         if re.search(r'Unknown shell type', completed.stderr):
             raise ConfigError(
-                'Python is not supported by this Tmod installation')
+                'Python is not supported by this TMod installation')
 
     def name(self):
         return 'tmod'
@@ -417,25 +433,27 @@ class TModImpl(ModulesSystemImpl):
     def version(self):
         return self._version
 
-    def _run_module_command(self, *args):
-        command = [self._command, *args]
-        return os_ext.run_command(' '.join(command))
+    def _run_module_command(self, *args, msg=None):
+        command = ' '.join([self._command, *args])
+        try:
+            completed = os_ext.run_command(command, check=True)
+        except SpawnedProcessError as e:
+            raise EnvironError(msg) from e
+
+        if self._module_command_failed(completed):
+            err = SpawnedProcessError(command,
+                                      completed.stdout,
+                                      completed.stderr,
+                                      completed.returncode)
+            raise EnvironError(msg) from err
+
+        return completed
 
     def _module_command_failed(self, completed):
         return re.search(r'ERROR', completed.stderr) is not None
 
     def _exec_module_command(self, *args, msg=None):
-        completed = self._run_module_command(*args)
-        if self._module_command_failed(completed):
-            if msg is None:
-                msg = 'modules system command failed: '
-                if isinstance(completed.args, str):
-                    msg += completed.args
-                else:
-                    msg += ' '.join(completed.args)
-
-            raise EnvironError(msg)
-
+        completed = self._run_module_command(*args, msg=msg)
         exec(completed.stdout)
 
     def loaded_modules(self):
@@ -448,7 +466,8 @@ class TModImpl(ModulesSystemImpl):
 
     def conflicted_modules(self, module):
         conflict_list = []
-        completed = self._run_module_command('show', str(module))
+        completed = self._run_module_command(
+            'show', str(module), msg="could not show module '%s'" % module)
         return [Module(m.group(1))
                 for m in re.finditer(r'^conflict\s+(\S+)',
                                      completed.stderr, re.MULTILINE)]
@@ -457,12 +476,14 @@ class TModImpl(ModulesSystemImpl):
         return module in self.loaded_modules()
 
     def load_module(self, module):
-        self._exec_module_command('load', str(module),
-                                  msg='could not load module %s' % module)
+        self._exec_module_command(
+            'load', str(module),
+            msg="could not load module '%s' correctly" % module)
 
     def unload_module(self, module):
-        self._exec_module_command('unload', str(module),
-                                  msg='could not unload module %s' % module)
+        self._exec_module_command(
+            'unload', str(module),
+            msg="could not unload module '%s' correctly" % module)
 
     def unload_all(self):
         self._exec_module_command('purge')
@@ -488,22 +509,37 @@ class TModImpl(ModulesSystemImpl):
 class TMod4Impl(TModImpl):
     """Module system for TMod 4."""
 
+    MIN_VERSION = (4, 1)
+
     def __init__(self):
         self._command = 'modulecmd python'
         try:
             completed = os_ext.run_command(self._command + ' -V', check=True)
         except OSError as e:
             raise ConfigError(
-                'could not find a sane Tmod4 installation') from e
+                'could not find a sane TMod4 installation') from e
         except SpawnedProcessError as e:
             raise ConfigError(
-                'could not get the Python bindings for Tmod4') from e
+                'could not get the Python bindings for TMod4') from e
 
-        version_match = re.match('^Modules Release (\S+)\s+', completed.stderr)
+        version_match = re.match(r'^Modules Release (\S+)\s+',
+                                 completed.stderr)
         if not version_match:
             raise ConfigError('could not retrieve the TMod4 version')
 
-        self._version = version_match.group(1)
+        version = version_match.group(1)
+        try:
+            ver_major, ver_minor, *_ = [int(v) for v in version.split('.')]
+        except ValueError:
+            raise ConfigError(
+                'could not parse TMod4 version string: ' + version) from None
+
+        if (ver_major, ver_minor) < self.MIN_VERSION:
+            raise ConfigError(
+                'unsupported TMod4 version: %s (required >= %s)' %
+                (version, self.MIN_VERSION))
+
+        self._version = version
 
     def name(self):
         return 'tmod4'
@@ -567,7 +603,8 @@ class LModImpl(TModImpl):
 
     def conflicted_modules(self, module):
         conflict_list = []
-        completed = self._run_module_command('show', str(module))
+        completed = self._run_module_command(
+            'show', str(module), msg="could not show module '%s'" % module)
 
         # Lmod accepts both Lua and and Tcl syntax
         # The following test allows incorrect syntax, e.g., `conflict

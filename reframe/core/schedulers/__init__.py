@@ -3,12 +3,17 @@
 #
 
 import abc
+import os
 
 import reframe.core.debug as debug
 import reframe.core.fields as fields
-from reframe.core.exceptions import JobNotStartedError
+import reframe.core.shell as shell
+import reframe.utility.typecheck as typ
+from reframe.core.exceptions import JobError, JobNotStartedError
 from reframe.core.launchers import JobLauncher
 from reframe.core.runtime import runtime
+from reframe.core.logging import getlogger
+
 
 class JobState:
     def __init__(self, state):
@@ -41,9 +46,9 @@ class Job(abc.ABC):
 
     #: Options to be passed to the backend job scheduler.
     #:
-    #: :type: :class:`list` of :class:`str`
+    #: :type: :class:`List[str]`
     #: :default: ``[]``
-    options = fields.TypedListField('options', str)
+    options = fields.TypedField('options', typ.List[str])
 
     #: The parallel program launcher that will be used to launch the parallel
     #: executable of this job.
@@ -51,16 +56,14 @@ class Job(abc.ABC):
     #: :type: :class:`reframe.core.launchers.JobLauncher`
     launcher = fields.TypedField('launcher', JobLauncher)
 
-    _jobid = fields.IntegerField('_jobid', allow_none=True)
-    _exitcode = fields.IntegerField('_exitcode', allow_none=True)
-    _state = fields.TypedField('_state', JobState, allow_none=True)
+    _jobid = fields.TypedField('_jobid', int, type(None))
+    _exitcode = fields.TypedField('_exitcode', int, type(None))
+    _state = fields.TypedField('_state', JobState, type(None))
 
     # The sched_* arguments are exposed also to the frontend
     def __init__(self,
                  name,
-                 command,
                  launcher,
-                 environs=[],
                  workdir='.',
                  num_tasks=1,
                  num_tasks_per_node=None,
@@ -68,13 +71,12 @@ class Job(abc.ABC):
                  num_tasks_per_socket=None,
                  num_cpus_per_task=None,
                  use_smt=None,
-                 time_limit=(0, 10, 0),
+                 time_limit=None,
                  script_filename=None,
                  stdout=None,
                  stderr=None,
-                 pre_environ=[],
-                 pre_run=[],
-                 post_run=[],
+                 sched_flex_alloc_tasks=None,
+                 sched_access=[],
                  sched_account=None,
                  sched_partition=None,
                  sched_reservation=None,
@@ -85,18 +87,9 @@ class Job(abc.ABC):
 
         # Mutable fields
         self.options = list(sched_options)
-
-        # Commands to be fun before environment loading
-        self._pre_environ = list(pre_environ)
-
-        # Commands to be run before and after the job is launched
-        self._pre_run  = list(pre_run)
-        self._post_run = list(post_run)
         self.launcher = launcher
 
-        self._name = 'rfm_' + name
-        self._command = command
-        self._environs = list(environs)
+        self._name = name
         self._workdir = workdir
         self._num_tasks = num_tasks
         self._num_tasks_per_node = num_tasks_per_node
@@ -108,8 +101,11 @@ class Job(abc.ABC):
         self._stdout = stdout or '%s.out' % name
         self._stderr = stderr or '%s.err' % name
         self._time_limit = time_limit
+        self._nodelist = None
 
         # Backend scheduler related information
+        self._sched_flex_alloc_tasks = sched_flex_alloc_tasks
+        self._sched_access = sched_access
         self._sched_nodelist = sched_nodelist
         self._sched_exclude_nodelist = sched_exclude_nodelist
         self._sched_partition = sched_partition
@@ -157,19 +153,19 @@ class Job(abc.ABC):
         return self._name
 
     @property
-    def command(self):
-        return self._command
-
-    @property
     def workdir(self):
         return self._workdir
 
     @property
-    def environs(self):
-        return self._environs
-
-    @property
     def num_tasks(self):
+        """The number of tasks assigned to this job.
+
+        This attribute is useful in a flexible regression test for determining
+        the actual number of tasks that ReFrame assigned to the test.
+
+        For more information on flexible task allocation, please refer to the
+        `tutorial <advanced.html#flexible-regression-tests>`__.
+        """
         return self._num_tasks
 
     @property
@@ -209,6 +205,14 @@ class Job(abc.ABC):
         return self._use_smt
 
     @property
+    def sched_flex_alloc_tasks(self):
+        return self._sched_flex_alloc_tasks
+
+    @property
+    def sched_access(self):
+        return self._sched_access
+
+    @property
     def sched_nodelist(self):
         return self._sched_nodelist
 
@@ -232,38 +236,87 @@ class Job(abc.ABC):
     def sched_exclusive_access(self):
         return self._sched_exclusive_access
 
-    def emit_pre_environ(self, builder):
-        for c in self._pre_environ:
-            builder.verbatim(c)
+    def prepare(self, commands, environs=None, pre_environ=None, **gen_opts):
+        environs = environs or []
+        pre_environ = pre_environ or []
+        if self.num_tasks <= 0:
+            num_tasks_per_node = self.num_tasks_per_node or 1
+            min_num_tasks = (-self.num_tasks if self.num_tasks else
+                             num_tasks_per_node)
 
-    def emit_environ(self, builder):
-        rt = runtime()
-        if rt.system.modules_system_purge:
-            builder.verbatim('%s' % rt.modules_system.emit_unload_all())
+            try:
+                guessed_num_tasks = self.guess_num_tasks()
+            except NotImplementedError as e:
+                raise JobError('flexible task allocation is not supported by '
+                               'this backend') from e
 
-        for e in self._environs:
-            e.emit_load_instructions(builder)
+            if guessed_num_tasks < min_num_tasks:
+                nodes_required = min_num_tasks // num_tasks_per_node
+                nodes_found = guessed_num_tasks // num_tasks_per_node
+                raise JobError('could not find enough nodes: '
+                               'required %s, found %s' %
+                               (nodes_required, nodes_found))
 
-    def emit_pre_run(self, builder):
-        for c in self._pre_run:
-            builder.verbatim(c)
+            self._num_tasks = guessed_num_tasks
+            getlogger().debug('flex_alloc_tasks: setting num_tasks to %s' %
+                              self._num_tasks)
 
-    def emit_post_run(self, script_builder):
-        for c in self._post_run:
-            script_builder.verbatim(c)
+        with shell.generate_script(self.script_filename,
+                                   **gen_opts) as builder:
+            builder.write_prolog(self.emit_preamble())
+            
+            for c in pre_environ:
+                builder.write_prolog(c)
+            
+            rt = runtime()
+            if rt.system.modules_system_purge:
+                builder.verbatim('%s' % rt.modules_system.emit_unload_all())
+            
+            for e in environs:
+                builder.write(e.emit_load_commands())
 
-    def prepare(self, script_builder):
-        self.emit_preamble(script_builder)
-        self.emit_pre_environ(script_builder)
-        self.emit_environ(script_builder)
-        self.emit_pre_run(script_builder)
-        self.launcher.emit_run_command(self, script_builder)
-        self.emit_post_run(script_builder)
-        with open(self.script_filename, 'w') as fp:
-            fp.write(script_builder.finalise())
+            for c in commands:
+                builder.write_body(c)
 
     @abc.abstractmethod
-    def emit_preamble(self, builder):
+    def emit_preamble(self):
+        pass
+
+    def guess_num_tasks(self):
+        if isinstance(self.sched_flex_alloc_tasks, int):
+            if self.sched_flex_alloc_tasks <= 0:
+                raise JobError('invalid number of flex_alloc_tasks: %s' %
+                               self.sched_flex_alloc_tasks)
+
+            return self.sched_flex_alloc_tasks
+
+        available_nodes = self.get_all_nodes()
+        getlogger().debug('flex_alloc_tasks: total available nodes %s ' %
+                          len(available_nodes))
+
+        # Try to guess the number of tasks now
+        available_nodes = self.filter_nodes(available_nodes,
+                                            self.sched_access + self.options)
+
+        if self.sched_flex_alloc_tasks == 'idle':
+            available_nodes = {n for n in available_nodes
+                               if n.is_available()}
+            getlogger().debug(
+                'flex_alloc_tasks: selecting idle nodes: '
+                'available nodes now: %s' % len(available_nodes))
+
+        num_tasks_per_node = self.num_tasks_per_node or 1
+        num_tasks = len(available_nodes) * num_tasks_per_node
+        return num_tasks
+
+    @abc.abstractmethod
+    def get_all_nodes(self):
+        # Gets all the available nodes
+        pass
+
+    @abc.abstractmethod
+    def filter_nodes(self, nodes, options):
+        # Filter nodes according to the scheduler options
         pass
 
     @abc.abstractmethod
@@ -288,3 +341,30 @@ class Job(abc.ABC):
     def finished(self):
         if self._jobid is None:
             raise JobNotStartedError('cannot poll an unstarted job')
+
+    @property
+    def nodelist(self):
+        """The list of node names assigned to this job.
+
+        This attribute is :class:`None` if no nodes are assigned to the job
+        yet.
+        This attribute is set reliably only for the ``slurm`` backend, i.e.,
+        Slurm *with* accounting enabled.
+        The ``squeue`` scheduler backend, i.e., Slurm *without* accounting,
+        might not set this attribute for jobs that finish very quickly.
+        For the ``local`` scheduler backend, this returns an one-element list
+        containing the hostname of the current host.
+
+        This attribute might be useful in a flexible regression test for
+        determining the actual nodes that were assigned to the test.
+
+        For more information on flexible task allocation, please refer to the
+        corresponding `section <advanced.html#flexible-regression-tests>`__ of
+        the tutorial.
+
+        This attribute is *not* supported by the ``pbs`` scheduler backend.
+
+        .. versionadded:: 2.17
+
+        """
+        return self._nodelist

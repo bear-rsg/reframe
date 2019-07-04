@@ -2,7 +2,6 @@ import copy
 import itertools
 import os
 import re
-import shutil
 import sys
 import tempfile
 import unittest
@@ -66,6 +65,8 @@ class TestFrontend(unittest.TestCase):
             ret += ['-r']
         elif self.action == 'list':
             ret += ['-l']
+        elif self.action == 'list_detailed':
+            ret += ['-L']
         elif self.action == 'help':
             ret += ['-h']
 
@@ -93,8 +94,8 @@ class TestFrontend(unittest.TestCase):
         self.perflogdir = '.rfm-perflogs'
 
     def tearDown(self):
-        shutil.rmtree(self.prefix)
-        shutil.rmtree(self.perflogdir, ignore_errors=True)
+        os_ext.rmtree(self.prefix)
+        os_ext.rmtree(self.perflogdir, ignore_errors=True)
         os_ext.force_remove_file(self.logfile)
 
     def _run_reframe(self):
@@ -102,10 +103,10 @@ class TestFrontend(unittest.TestCase):
         return run_command_inline(self.argv, cli.main)
 
     def _stage_exists(self, check_name, partitions, environs):
-        stagedir = os.path.join(self.prefix, 'stage')
+        stagedir = os.path.join(self.prefix, 'stage', 'generic')
         for p in partitions:
             for e in environs:
-                path = os.path.join(stagedir, p, check_name, e)
+                path = os.path.join(stagedir, p, e, check_name)
                 if not os.path.exists(path):
                     return False
 
@@ -131,8 +132,8 @@ class TestFrontend(unittest.TestCase):
     def test_check_success(self):
         self.more_options = ['--save-log-files']
         returncode, stdout, _ = self._run_reframe()
-        self.assertNotIn('FAILED', stdout)
         self.assertIn('PASSED', stdout)
+        self.assertNotIn('FAILED', stdout)
         self.assertEqual(0, returncode)
         self.assert_log_file_is_saved()
 
@@ -147,12 +148,16 @@ class TestFrontend(unittest.TestCase):
         self.local = False
         self.system = partition.fullname
 
-        # pick up the programming environment of the partition
-        self.environs = [partition.environs[0].name]
+        # Pick up the programming environment of the partition
+        # Prepend ^ and append $ so as to much exactly the given name
+        self.environs = ['^' + partition.environs[0].name + '$']
 
         returncode, stdout, _ = self._run_reframe()
         self.assertNotIn('FAILED', stdout)
         self.assertIn('PASSED', stdout)
+
+        # Assert that we have run only one test case
+        self.assertIn('Ran 1 test case(s)', stdout)
         self.assertEqual(0, returncode)
 
     def test_check_failure(self):
@@ -246,8 +251,6 @@ class TestFrontend(unittest.TestCase):
         self.system = 'foo'
         self.checkpath = []
         returncode, stdout, stderr = self._run_reframe()
-        print(stdout)
-        print(stderr)
         self.assertNotIn('Traceback', stdout)
         self.assertNotIn('Traceback', stderr)
         self.assertEqual(1, returncode)
@@ -350,4 +353,49 @@ class TestFrontend(unittest.TestCase):
         self.more_options = ['-n', 'NoPrgEnvCheck']
         returncode, stdout, _ = self._run_reframe()
         self.assertIn('Found 0 check(s)', stdout)
+        self.assertEqual(0, returncode)
+
+    def test_list_with_details(self):
+        self.checkpath = ['unittests/resources/checks/frontend_checks.py']
+        self.action = 'list_detailed'
+        returncode, stdout, stderr = self._run_reframe()
+        self.assertNotIn('Traceback', stdout)
+        self.assertNotIn('Traceback', stderr)
+        self.assertEqual(0, returncode)
+
+    def test_show_config(self):
+        # Just make sure that this option does not make the frontend crash
+        self.more_options = ['--show-config']
+        self.system = 'testsys'
+        returncode, stdout, stderr = self._run_reframe()
+        self.assertNotIn('Traceback', stdout)
+        self.assertNotIn('Traceback', stderr)
+        self.assertEqual(0, returncode)
+
+    def test_show_env_config(self):
+        # Just make sure that this option does not make the frontend crash
+        self.more_options = ['--show-config-env', 'PrgEnv-gnu']
+        self.system = 'testsys'
+        returncode, stdout, stderr = self._run_reframe()
+        self.assertNotIn('Traceback', stdout)
+        self.assertNotIn('Traceback', stderr)
+        self.assertEqual(0, returncode)
+
+    def test_show_env_config_unknown_env(self):
+        # Just make sure that this option does not make the frontend crash
+        self.more_options = ['--show-config-env', 'foobar']
+        self.system = 'testsys'
+        returncode, stdout, stderr = self._run_reframe()
+        self.assertNotIn('Traceback', stdout)
+        self.assertNotIn('Traceback', stderr)
+        self.assertEqual(1, returncode)
+
+    def test_verbosity(self):
+        self.more_options = ['-vvvvv']
+        self.system = 'testsys'
+        self.action = 'list'
+        returncode, stdout, stderr = self._run_reframe()
+        self.assertNotEqual('', stdout)
+        self.assertNotIn('Traceback', stdout)
+        self.assertNotIn('Traceback', stderr)
         self.assertEqual(0, returncode)
