@@ -1,5 +1,6 @@
 import os
 import signal
+import socket
 import stat
 import subprocess
 import time
@@ -7,7 +8,7 @@ from datetime import datetime
 
 import reframe.core.schedulers as sched
 import reframe.utility.os_ext as os_ext
-from reframe.core.exceptions import ReframeError
+from reframe.core.exceptions import JobError, ReframeError
 from reframe.core.logging import getlogger
 from reframe.core.schedulers.registry import register_scheduler
 
@@ -54,9 +55,18 @@ class LocalJob(sched.Job):
 
         # Update job info
         self._jobid = self._proc.pid
+        self._nodelist = [socket.gethostname()]
 
-    def emit_preamble(self, builder):
-        pass
+    def emit_preamble(self):
+        return []
+
+    def get_all_nodes(self):
+        raise NotImplementedError(
+            'local scheduler does not support listing of available nodes')
+
+    def filter_nodes(self, nodes, options):
+        raise NotImplementedError(
+            'local scheduler does not support filtering of available nodes')
 
     def _kill_all(self):
         """Send SIGKILL to all the processes of the spawned job."""
@@ -133,8 +143,12 @@ class LocalJob(sched.Job):
             return
 
         # Convert job's time_limit to seconds
-        h, m, s = self.time_limit
-        timeout = h * 3600 + m * 60 + s
+        if self.time_limit is not None:
+            h, m, s = self.time_limit
+            timeout = h * 3600 + m * 60 + s
+        else:
+            timeout = 0
+
         try:
             self._wait_all(timeout)
             self._exitcode = self._proc.returncode

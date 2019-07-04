@@ -1,6 +1,8 @@
+import functools
 import itertools
 import re
 import time
+from argparse import ArgumentParser
 from datetime import datetime
 
 import reframe.core.schedulers as sched
@@ -34,6 +36,9 @@ SLURM_JOB_SUSPENDED   = SlurmJobState('SUSPENDED')
 SLURM_JOB_TIMEOUT     = SlurmJobState('TIMEOUT')
 
 
+_run_strict = functools.partial(os_ext.run_command, check=True)
+
+
 @register_scheduler('slurm')
 class SlurmJob(sched.Job):
     # In some systems, scheduler performance is sensitive to the squeue poll
@@ -45,7 +50,7 @@ class SlurmJob(sched.Job):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._prefix  = '#SBATCH'
+        self._prefix = '#SBATCH'
         self._completion_states = [SLURM_JOB_BOOT_FAIL,
                                    SLURM_JOB_CANCELLED,
                                    SLURM_JOB_COMPLETED,
@@ -72,88 +77,75 @@ class SlurmJob(sched.Job):
         self._is_cancelling = False
         self._update_state_count = 0
 
-    def _emit_job_option(self, var, option, builder):
+    def _format_option(self, var, option):
         if var is not None:
-            builder.verbatim(self._prefix + ' ' + option.format(var))
+            return self._prefix + ' ' + option.format(var)
+        else:
+            return ''
 
-    def _run_command(self, cmd, timeout=None):
-        """Run command cmd and re-raise any exception as a JobError."""
-        try:
-            return os_ext.run_command(cmd, check=True, timeout=timeout)
-        except SpawnedProcessError as e:
-            raise JobError(jobid=self._jobid) from e
+    def prepare(self, commands, environs=None, pre_environ=None, **gen_opts):
+        if self.sched_partition:
+            self.options.append('--partition=%s' % self.sched_partition)
 
-    def emit_preamble(self, builder):
-        self._emit_job_option(self.name, '--job-name="{0}"', builder)
-        self._emit_job_option('%d:%d:%d' % self.time_limit,
-                              '--time={0}', builder)
-        self._emit_job_option(self.num_tasks, '--ntasks={0}', builder)
-        self._emit_job_option(self.num_tasks_per_node,
-                              '--ntasks-per-node={0}', builder)
-        self._emit_job_option(self.num_tasks_per_core,
-                              '--ntasks-per-core={0}', builder)
-        self._emit_job_option(self.num_tasks_per_socket,
-                              '--ntasks-per-socket={0}', builder)
-        self._emit_job_option(self.num_cpus_per_task,
-                              '--cpus-per-task={0}', builder)
-        self._emit_job_option(self.sched_partition, '--partition={0}', builder)
+        if self.sched_account:
+            self.options.append('--account=%s' % self.sched_account)
+
+        if self.sched_nodelist:
+            self.options.append('--nodelist=%s' % self.sched_nodelist)
+
+        if self.sched_exclude_nodelist:
+            self.options.append('--exclude=%s' % self.sched_exclude_nodelist)
+
+        if self.sched_reservation:
+            self.options.append('--reservation=%s' % self.sched_reservation)
+
+        super().prepare(commands, environs, pre_environ, **gen_opts)
+
+    def emit_preamble(self):
+        preamble = [
+            self._format_option(self.name, '--job-name="{0}"'),
+            self._format_option(self.num_tasks, '--ntasks={0}'),
+            self._format_option(self.num_tasks_per_node,
+                                '--ntasks-per-node={0}'),
+            self._format_option(self.num_tasks_per_core,
+                                '--ntasks-per-core={0}'),
+            self._format_option(self.num_tasks_per_socket,
+                                '--ntasks-per-socket={0}'),
+            self._format_option(self.num_cpus_per_task, '--cpus-per-task={0}'),
+            self._format_option(self.stdout, '--output={0}'),
+            self._format_option(self.stderr, '--error={0}'),
+        ]
+
+        if self.time_limit is not None:
+            preamble.append(self._format_option('%d:%d:%d' % self.time_limit,
+                                                '--time={0}'))
+
         if self.sched_exclusive_access:
-            self._emit_job_option(self.sched_exclusive_access,
-                                  '--exclusive', builder)
+            preamble.append(self._format_option(
+                self.sched_exclusive_access, '--exclusive'))
 
-        self._emit_job_option(self.sched_account, '--account={0}', builder)
-        self._emit_job_option(self.sched_nodelist, '--nodelist={0}', builder)
-        self._emit_job_option(self.sched_exclude_nodelist,
-                              '--exclude={0}', builder)
         if self.use_smt is None:
             hint = None
         else:
             hint = 'multithread' if self.use_smt else 'nomultithread'
 
-        self._emit_job_option(hint, '--hint={0}', builder)
-        self._emit_job_option(self.sched_reservation,
-                              '--reservation={0}', builder)
-        self._emit_job_option(self.stdout, '--output={0}', builder)
-        self._emit_job_option(self.stderr, '--error={0}', builder)
+        for opt in self.sched_access:
+            preamble.append('%s %s' % (self._prefix, opt))
 
+        preamble.append(self._format_option(hint, '--hint={0}'))
         prefix_patt = re.compile(r'(#\w+)')
         for opt in self.options:
             if not prefix_patt.match(opt):
-                # FIXME: Temporary solution to issue #526. Check if a partition
-                #        option is given in site settings which would overwrite
-                #        the corresponding command line option.
-                if (opt.startswith(('-p', '--partition')) and
-                    self.sched_partition):
-                    continue
-                builder.verbatim('%s %s' % (self._prefix, opt))
+                preamble.append('%s %s' % (self._prefix, opt))
             else:
-                builder.verbatim(opt)
+                preamble.append(opt)
 
-    def prepare(self, builder):
-        if self.num_tasks == 0:
-            if self.sched_reservation:
-                nodes = self._get_reservation_nodes()
-                num_nodes = self._count_compatible_nodes(nodes)
-                getlogger().debug(
-                    'found %s available node(s) in reservation %s' %
-                    (num_nodes, self.sched_reservation))
-                if num_nodes == 0:
-                    raise JobError("could not find any node satisfying the "
-                                   "required criteria in reservation '%s'" %
-                                   self.sched_reservation)
-                num_tasks_per_node = self.num_tasks_per_node or 1
-                self._num_tasks = num_nodes * num_tasks_per_node
-                getlogger().debug('automatically setting num_tasks to %s' %
-                                  self.num_tasks)
-            else:
-                raise JobError('A reservation has to be specified '
-                               'when setting the num_tasks to 0.')
-
-        super().prepare(builder)
+        # Filter out empty statements before returning
+        return list(filter(None, preamble))
 
     def submit(self):
         cmd = 'sbatch %s' % self.script_filename
-        completed = self._run_command(cmd, settings().job_submit_timeout)
+        completed = _run_strict(cmd, timeout=settings().job_submit_timeout)
         jobid_match = re.search(r'Submitted batch job (?P<jobid>\d+)',
                                 completed.stdout)
         if not jobid_match:
@@ -162,93 +154,145 @@ class SlurmJob(sched.Job):
 
         self._jobid = int(jobid_match.group('jobid'))
 
-    def _count_compatible_nodes(self, nodes):
-        constraints = set()
-        partitions = (set(self.sched_partition.split())
-                      if self.sched_partition else set())
-        excluded_node_names = self._get_excluded_node_names()
+    def get_all_nodes(self):
+        try:
+            completed = _run_strict('scontrol -a show -o nodes')
+        except SpawnedProcessError as e:
+            raise JobError('could not retrieve node information') from e
 
-        if self.options:
-            for optstr in self.options:
-                optstr = optstr.strip()
-                if optstr.startswith('--'):
-                    optstr = optstr.replace('=', ' ', 1)
+        node_descriptions = completed.stdout.splitlines()
+        return {SlurmNode(descr) for descr in node_descriptions}
 
-                option, arg = optstr.split(maxsplit=1)
-                if option == '-C' or option == '--constraint':
-                    constraints.update(arg.split())
+    def _get_default_partition(self):
+        completed = _run_strict('scontrol -a show -o partitions')
+        partition_match = re.search(r'PartitionName=(?P<partition>\S+)\s+'
+                                    r'.*Default=YES.*', completed.stdout)
+        if partition_match:
+            return partition_match.group('partition')
 
-                if option == '-p' or option == '--partition':
-                    partitions.update(arg.split())
+        return None
 
-        num_nodes = 0
-        for n in nodes:
-            if (n.active_features >= constraints and
-                n.partitions >= partitions and
-                n.name not in excluded_node_names):
-                num_nodes += 1
+    def filter_nodes(self, nodes, options):
+        option_parser = ArgumentParser()
+        option_parser.add_argument('--reservation')
+        option_parser.add_argument('-p', '--partition')
+        option_parser.add_argument('-w', '--nodelist')
+        option_parser.add_argument('-C', '--constraint')
+        option_parser.add_argument('-x', '--exclude')
+        parsed_args, _ = option_parser.parse_known_args(options)
+        reservation = parsed_args.reservation
+        partitions = parsed_args.partition
+        nodelist = parsed_args.nodelist
+        constraints = parsed_args.constraint
+        exclude_nodes = parsed_args.exclude
+        if reservation:
+            reservation = reservation.strip()
+            nodes &= self._get_reservation_nodes(reservation)
+            getlogger().debug(
+                'flex_alloc_tasks: filtering nodes by reservation %s: '
+                'available nodes now: %s' % (reservation, len(nodes)))
 
-        return num_nodes
+        if partitions:
+            partitions = set(partitions.strip().split(','))
+        else:
+            default_partition = self._get_default_partition()
+            partitions = {default_partition} if default_partition else set()
+            getlogger().debug('flex_alloc_tasks: default partition: %s' %
+                              default_partition)
 
-    def _get_reservation_nodes(self):
-        command = 'scontrol show res %s' % self.sched_reservation
-        completed = os_ext.run_command(command, check=True)
+        nodes = {n for n in nodes if n.partitions >= partitions}
+        getlogger().debug(
+            'flex_alloc_tasks: filtering nodes by partition(s) %s: '
+            'available nodes now: %s' % (partitions, len(nodes)))
+
+        if constraints:
+            constraints = set(constraints.strip().split(','))
+            nodes = {n for n in nodes if n.active_features >= constraints}
+            getlogger().debug(
+                'flex_alloc_tasks: filtering nodes by constraint(s) %s: '
+                'available nodes now: %s' % (constraints, len(nodes)))
+
+        if nodelist:
+            nodelist = nodelist.strip()
+            nodes &= self._get_nodes_by_name(nodelist)
+            getlogger().debug(
+                'flex_alloc_tasks: filtering nodes by nodelist: %s '
+                'available nodes now: %s' % (nodelist, len(nodes)))
+
+        if exclude_nodes:
+            exclude_nodes = exclude_nodes.strip()
+            nodes -= self._get_nodes_by_name(exclude_nodes)
+            getlogger().debug(
+                'flex_alloc_tasks: excluding node(s): %s '
+                'available nodes now: %s' % (exclude_nodes, len(nodes)))
+
+        return nodes
+
+    def _get_reservation_nodes(self, reservation):
+        completed = _run_strict('scontrol -a show res %s' % reservation)
         node_match = re.search(r'(Nodes=\S+)', completed.stdout)
         if node_match:
             reservation_nodes = node_match[1]
         else:
-            raise JobError("could not extract the nodes names for "
-                           "reservation '%s'" % self.sched_reservation)
+            raise JobError("could not extract the node names for "
+                           "reservation '%s'" % reservation)
 
-        completed = os_ext.run_command(
-            'scontrol show -o %s' % reservation_nodes, check=True)
+        completed = _run_strict('scontrol -a show -o %s' % reservation_nodes)
         node_descriptions = completed.stdout.splitlines()
-        return (SlurmNode(descr) for descr in node_descriptions)
+        return {SlurmNode(descr) for descr in node_descriptions}
 
-    def _get_excluded_node_names(self):
-        if not self.sched_exclude_nodelist:
-            return set()
-
-        command = 'scontrol show -o node %s' % self.sched_exclude_nodelist
-        try:
-            completed = os_ext.run_command(command, check=True)
-        except SpawnedProcessError as e:
-            raise JobError('could not retrieve the node description '
-                           'of nodes: %s' % self.sched_exclude_nodelist) from e
-
+    def _get_nodes_by_name(self, nodespec):
+        completed = os_ext.run_command('scontrol -a show -o node %s' %
+                                       nodespec)
         node_descriptions = completed.stdout.splitlines()
-        slurm_nodes = (SlurmNode(descr) for descr in node_descriptions)
-        return {n.name for n in slurm_nodes}
+        nodes_avail = set()
+        for descr in node_descriptions:
+            try:
+                nodes_avail.add(SlurmNode(descr))
+            except JobError:
+                pass
+
+        return nodes_avail
+
+    def _set_nodelist(self, nodespec):
+        if self._nodelist is not None:
+            return
+
+        if nodespec and nodespec != 'None assigned':
+            self._nodelist = [n.name for n in
+                              self._get_nodes_by_name(nodespec)]
 
     def _update_state(self):
         """Check the status of the job."""
 
-        completed = self._run_command(
-            'sacct -S %s -P -j %s -o jobid,state,exitcode' %
+        completed = _run_strict(
+            'sacct -S %s -P -j %s -o jobid,state,exitcode,nodelist' %
             (datetime.now().strftime('%F'), self._jobid)
         )
         self._update_state_count += 1
-        state_match = re.search(r'^(?P<jobid>\d+)\|(?P<state>\S+)([^\|]*)\|'
-                                r'(?P<exitcode>\d+)\:(?P<signal>\d+)',
-                                completed.stdout, re.MULTILINE)
+        state_match = re.search(
+            r'^(?P<jobid>\d+)\|(?P<state>\S+)([^\|]*)\|'
+            r'(?P<exitcode>\d+)\:(?P<signal>\d+)\|(?P<nodespec>.*)',
+            completed.stdout, re.MULTILINE)
         if state_match is None:
             getlogger().debug('job state not matched (stdout follows)\n%s' %
                               completed.stdout)
             return
 
         self._state = SlurmJobState(state_match.group('state'))
-
         if not self._update_state_count % SlurmJob.SACCT_SQUEUE_RATIO:
             self._cancel_if_blocked()
 
         if self._state in self._completion_states:
             self._exitcode = int(state_match.group('exitcode'))
 
+        self._set_nodelist(state_match.group('nodespec'))
+
     def _cancel_if_blocked(self):
         if self._is_cancelling or self._state not in self._pending_states:
             return
 
-        completed = self._run_command('squeue -h -j %s -o %%r' % self._jobid)
+        completed = _run_strict('squeue -h -j %s -o %%r' % self._jobid)
         if not completed.stdout:
             # Can't retrieve job's state. Perhaps it has finished already and
             # does not show up in the output of squeue
@@ -271,11 +315,22 @@ class SlurmJob(sched.Job):
         reason = reason.strip()
 
         if reason in self._cancel_reasons:
-            # Here we handle the case were the UnavailableNodes list is empty,
-            # which actually means that the job is pending
             if reason == 'ReqNodeNotAvail' and reason_details:
-                if re.match(r'UnavailableNodes:$', reason_details.strip()):
-                    return
+                node_match = re.match(
+                    r'UnavailableNodes:(?P<node_names>\S+)?',
+                    reason_details.strip())
+                if node_match:
+                    node_names = node_match['node_names']
+                    if node_names:
+                        # Retrieve the info of the unavailable nodes
+                        # and check if they are indeed down
+                        nodes = self._get_nodes_by_name(node_names)
+                        if not any(n.is_down() for n in nodes):
+                            return
+                    else:
+                        # List of unavailable nodes is empty; assume job
+                        # is pending
+                        return
 
             self.cancel(reason=reason)
             reason_msg = ('job cancelled because it was blocked due to '
@@ -301,8 +356,8 @@ class SlurmJob(sched.Job):
     def cancel(self, reason=None):
         super().cancel(reason=reason)
         getlogger().debug('cancelling job (id=%s)' % self._jobid)
-        self._run_command('scancel %s' % self._jobid,
-                          settings().job_submit_timeout)
+        _run_strict('scancel %s' % self._jobid,
+                    timeout=settings().job_submit_timeout)
         self._is_cancelling = True
 
     def finished(self):
@@ -344,10 +399,11 @@ class SqueueJob(SlurmJob):
         # We don't run the command with check=True, because if the job has
         # finished already, squeue might return an error about an invalid
         # job id.
-        completed = self._run_command(
-            'squeue -h -j %s -O state,exit_code,reason' % self._jobid)
-        output = completed.stdout.strip()
-        if not output:
+        completed = os_ext.run_command('squeue -h -j %s -o "%%T|%%N|%%r"' %
+                                       self._jobid)
+        state_match = re.search(r'^(?P<state>\S+)\|(?P<nodespec>\S*)\|'
+                                r'(?P<reason>.+)', completed.stdout)
+        if state_match is None:
             # Assume that job has finished
             self._state = (SLURM_JOB_CANCELLED if self._cancelled
                            else SLURM_JOB_COMPLETED)
@@ -358,15 +414,10 @@ class SqueueJob(SlurmJob):
 
             return
 
-        # There is no reliable way to get the exit code, so we always capture
-        # it, just in case we are lucky enough and get its actual value while
-        # the job has finished but is still showing up in the queue (e.g., when
-        # it is 'COMPLETING')
-        state, exitcode, reason = output.split(maxsplit=2)
-        self._state = SlurmJobState(state)
-        self._exitcode = int(exitcode)
+        self._state = SlurmJobState(state_match.group('state'))
+        self._set_nodelist(state_match.group('nodespec'))
         if not self._is_cancelling and self._state in self._pending_states:
-            self._check_and_cancel(reason)
+            self._check_and_cancel(state_match.group('reason'))
 
     def cancel(self, reason=None):
         # There is no reliable way to get the state of the job after it has
@@ -381,10 +432,31 @@ class SlurmNode:
 
     def __init__(self, node_descr):
         self._name = self._extract_attribute('NodeName', node_descr)
-        self._partitions = set(self._extract_attribute(
-            'Partitions', node_descr).split(','))
-        self._active_features = set(self._extract_attribute(
-            'ActiveFeatures', node_descr).split(','))
+        if not self._name:
+            raise JobError('could not extract NodeName from node description')
+
+        self._partitions = self._extract_attribute(
+            'Partitions', node_descr, sep=',') or set()
+        self._active_features = self._extract_attribute(
+            'ActiveFeatures', node_descr, sep=',') or set()
+        self._states = self._extract_attribute(
+            'State', node_descr, sep='+') or set()
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+
+        return self._name == other._name
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def is_available(self):
+        return all([self._states == {'IDLE'}, self._partitions,
+                    self._active_features, self._states])
+
+    def is_down(self):
+        return bool({'DOWN', 'DRAIN', 'MAINT', 'NO_RESPOND'} & self._states)
 
     @property
     def active_features(self):
@@ -398,13 +470,17 @@ class SlurmNode:
     def partitions(self):
         return self._partitions
 
-    def _extract_attribute(self, attr_name, node_descr):
+    @property
+    def states(self):
+        return self._states
+
+    def _extract_attribute(self, attr_name, node_descr, sep=None):
         attr_match = re.search(r'%s=(\S+)' % attr_name, node_descr)
         if attr_match:
-            return attr_match.group(1)
-        else:
-            raise JobError("could not extract attribute '%s' from "
-                           "node description" % attr_name)
+            attr = attr_match.group(1)
+            return set(attr_match.group(1).split(sep)) if sep else attr
+
+        return None
 
     def __str__(self):
         return self._name

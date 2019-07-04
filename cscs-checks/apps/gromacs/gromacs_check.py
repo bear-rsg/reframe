@@ -8,13 +8,12 @@ import reframe.utility.sanity as sn
 class GromacsBaseCheck(rfm.RunOnlyRegressionTest):
     def __init__(self, output_file):
         super().__init__()
-
         self.valid_prog_environs = ['PrgEnv-gnu']
         self.executable = 'gmx_mpi'
 
         # Reset sources dir relative to the SCS apps prefix
         self.sourcesdir = os.path.join(self.current_system.resourcesdir,
-                                       'Gromacs')
+                                       'Gromacs', 'herflat')
         self.keep_files = [output_file]
 
         energy = sn.extractsingle(r'\s+Potential\s+Kinetic En\.\s+Total Energy'
@@ -23,11 +22,10 @@ class GromacsBaseCheck(rfm.RunOnlyRegressionTest):
                                   r'\s+Pressure \(bar\)\s+Constr\. rmsd',
                                   output_file, 'energy', float, item=-1)
         energy_reference = -3270799.9
-        energy_diff = sn.abs(energy - energy_reference)
 
         self.sanity_patterns = sn.all([
             sn.assert_found('Finished mdrun', output_file),
-            sn.assert_lt(energy_diff, 1560.1)
+            sn.assert_reference(energy, energy_reference, -0.001, 0.001)
         ])
 
         self.perf_patterns = {
@@ -44,92 +42,100 @@ class GromacsBaseCheck(rfm.RunOnlyRegressionTest):
                 'num_switches': 1
             }
         }
-
-
-class GromacsGPUCheck(GromacsBaseCheck):
-    def __init__(self, variant):
-        super().__init__('md.log')
-
-        self.valid_systems = ['daint:gpu', 'dom:gpu']
-        self.descr = 'GROMACS GPU check'
-        self.name = 'gromacs_gpu_%s_check' % variant
-        self.executable_opts = ('mdrun -dlb yes -ntomp 1 -npme 0 '
-                                '-s herflat.tpr ').split()
-        self.variables = {'CRAY_CUDA_MPS': '1'}
         self.tags = {'scs'}
-        self.num_gpus_per_node = 1
 
-        if self.current_system.name == 'dom':
+
+@rfm.required_version('>=2.16')
+@rfm.parameterized_test(*([s, v]
+                          for s in ['small', 'large']
+                          for v in ['prod', 'maint']))
+class GromacsGPUCheck(GromacsBaseCheck):
+    def __init__(self, scale, variant):
+        super().__init__('md.log')
+        self.valid_systems = ['daint:gpu']
+        self.descr = 'GROMACS GPU check'
+        self.executable_opts = ['mdrun', '-dlb yes', '-ntomp 1', '-npme 0',
+                                '-s herflat.tpr']
+        self.variables = {'CRAY_CUDA_MPS': '1'}
+        self.num_gpus_per_node = 1
+        if scale == 'small':
+            self.valid_systems += ['dom:gpu']
             self.num_tasks = 72
             self.num_tasks_per_node = 12
         else:
             self.num_tasks = 192
             self.num_tasks_per_node = 12
 
-
-@rfm.simple_test
-class GromacsGPUMaintCheck(GromacsGPUCheck):
-    def __init__(self):
-        super().__init__('maint')
-        self.tags |= {'maintenance'}
-        self.reference = {
-            'dom:gpu': {
-                'perf': (29.3, -0.05, None)
+        references = {
+            'maint': {
+                'small': {
+                    'dom:gpu': {'perf': (29.3, -0.05, None, 'ns/day')},
+                    'daint:gpu': {'perf': (30.3, -0.10, None, 'ns/day')}
+                },
+                'large': {
+                    'daint:gpu': {'perf': (42.0, -0.10, None, 'ns/day')}
+                }
             },
-            'daint:gpu': {
-                'perf': (60.2, -0.10, None)
-            },
-        }
-
-
-@rfm.simple_test
-class GromacsGPUProdCheck(GromacsGPUCheck):
-    def __init__(self):
-        super().__init__('prod')
-        self.tags |= {'production'}
-        self.reference = {
-            'dom:gpu': {
-                'perf': (37.5, -0.05, None)
-            },
-            'daint:gpu': {
-                'perf': (55.6, -0.20, None)
+            'prod': {
+                'small': {
+                    'dom:gpu': {'perf': (29.3, -0.05, None, 'ns/day')},
+                    'daint:gpu': {'perf': (30.3, -0.10, None, 'ns/day')}
+                },
+                'large': {
+                    'daint:gpu': {'perf': (42.0, -0.20, None, 'ns/day')}
+                }
             },
         }
+        self.reference = references[variant][scale]
+        self.tags |= {'maintenance' if variant == 'maint' else 'production'}
 
 
+@rfm.required_version('>=2.16')
+@rfm.parameterized_test(*([s, v]
+                          for s in ['small', 'large']
+                          for v in ['prod']))
 class GromacsCPUCheck(GromacsBaseCheck):
-    def __init__(self, variant):
+    def __init__(self, scale, variant):
         super().__init__('md.log')
-
-        self.valid_systems = ['daint:mc', 'dom:mc']
+        self.valid_systems = ['daint:mc']
         self.descr = 'GROMACS CPU check'
-        self.name = 'gromacs_cpu_%s_check' % variant
-        self.executable_opts = ('mdrun -dlb yes -ntomp 1 -npme -1 '
-                                '-nb cpu -s herflat.tpr ').split()
+        self.executable_opts = ['mdrun', '-dlb yes', '-ntomp 1', '-npme -1',
+                                '-nb cpu', '-s herflat.tpr']
 
-        if self.current_system.name == 'dom':
+        if scale == 'small':
+            self.valid_systems += ['dom:mc']
             self.num_tasks = 216
             self.num_tasks_per_node = 36
         else:
             self.num_tasks = 576
             self.num_tasks_per_node = 36
 
-
-@rfm.simple_test
-class GromacsCPUProdCheck(GromacsCPUCheck):
-    def __init__(self):
-        super().__init__('prod')
-        self.tags |= {'production'}
-        self.reference = {
-            'dom:mc': {
-                'perf': (42.7, -0.05, None)
+        references = {
+            'maint': {
+                'small': {
+                    'dom:mc': {'perf': (0.0, None, None, 'ns/day')},
+                    # FIXME: numbers may need update
+                    'daint:mc': {'perf': (38.8, -0.10, None, 'ns/day')}
+                },
+                'large': {
+                    'daint:mc': {'perf': (0.0, None, None, 'ns/day')}
+                }
             },
-            'daint:mc': {
-                'perf': (70.4, -0.20, None)
+            'prod': {
+                'small': {
+                    'dom:mc': {'perf': (42.7, -0.05, None, 'ns/day')},
+                    'daint:mc': {'perf': (38.8, -0.10, None, 'ns/day')}
+                },
+                'large': {
+                    'daint:mc': {'perf': (70.4, -0.20, None, 'ns/day')}
+                }
             },
         }
+        self.reference = references[variant][scale]
+        self.tags |= {'maintenance' if variant == 'maint' else 'production'}
 
 
+# FIXME: This test is obsolete; it is kept only for reference.
 @rfm.parameterized_test([1], [2], [4], [6], [8])
 class GromacsCPUMonchAcceptance(GromacsBaseCheck):
     def __init__(self, num_nodes):

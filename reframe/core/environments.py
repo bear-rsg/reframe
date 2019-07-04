@@ -1,11 +1,14 @@
+import collections
+import copy
 import errno
+import itertools
 import os
 
-import reframe.core.debug as debug
 import reframe.core.fields as fields
+import reframe.utility as util
 import reframe.utility.os_ext as os_ext
-from reframe.core.exceptions import (EnvironError, SpawnedProcessError,
-                                     CompilationError)
+import reframe.utility.typecheck as typ
+from reframe.core.exceptions import EnvironError, SpawnedProcessError
 from reframe.core.runtime import runtime
 
 
@@ -16,19 +19,19 @@ class Environment:
     to be set when this environment is loaded by the framework.
     Users may not create or modify directly environments.
     """
-    name = fields.StringPatternField('name', '(\w|-)+')
-    modules = fields.TypedListField('modules', str)
-    variables = fields.TypedDictField('variables', str, str)
+    name = fields.TypedField('name', typ.Str[r'(\w|-)+'])
+    modules = fields.TypedField('modules', typ.List[str])
+    variables = fields.TypedField('variables', typ.Dict[str, str])
 
-    def __init__(self, name, modules=[], variables={}, **kwargs):
+    def __init__(self, name, modules=[], variables=[]):
         self._name = name
         self._modules = list(modules)
-        self._variables = dict(variables)
+        self._variables = collections.OrderedDict(variables)
         self._loaded = False
         self._saved_variables = {}
         self._conflicted = []
         self._preloaded = set()
-        self._load_stmts = []
+        self._module_ops = []
 
     @property
     def name(self):
@@ -44,7 +47,7 @@ class Environment:
 
         :type: :class:`list` of :class:`str`
         """
-        return self._modules
+        return util.SequenceView(self._modules)
 
     @property
     def variables(self):
@@ -52,49 +55,40 @@ class Environment:
 
         :type: dictionary of :class:`str` keys/values.
         """
-        return self._variables
+        return util.MappingView(self._variables)
 
     @property
     def is_loaded(self):
         """:class:`True` if this environment is loaded,
         :class:`False` otherwise.
         """
-        return self._loaded
-
-    # Add module to the list of modules to be loaded.
-    def add_module(self, name):
-        self._modules.append(name)
-
-    # Set environment variable to name.
-    #
-    # If variable exists, its value will be saved internally and restored
-    # during unloading.
-    def set_variable(self, name, value):
-        self._variables[name] = value
+        is_module_loaded = runtime().modules_system.is_module_loaded
+        return (all(map(is_module_loaded, self._modules)) and
+                all(os.environ.get(k, None) == os_ext.expandvars(v)
+                    for k, v in self._variables.items()))
 
     def load(self):
         # conflicted module list must be filled at the time of load
         rt = runtime()
         for m in self._modules:
-            # If the modules_system_purge option is on, then don't actually load any modules,
-            # as they will just be purged anyway, and will slow down the tests, as it will take
-            # time to unload them again with the 'module purge'.
+            conflicted = []
+            # If modules are going to be unloaded, don't account for preloaded modules
             if not rt.system.modules_system_purge:
                 if rt.modules_system.is_module_loaded(m):
                     self._preloaded.add(m)
 
-                self._conflicted += rt.modules_system.load_module(m, force=True)
-                for conflict in self._conflicted:
-                    stmts = rt.modules_system.emit_unload_commands(conflict)
-                    self._load_stmts += stmts
+                conflicted = rt.modules_system.load_module(m, force=True)
+                for c in conflicted:
+                    self._module_ops.append(('u', c))
 
-            self._load_stmts += rt.modules_system.emit_load_commands(m)
+            self._module_ops.append(('l', m))
+            self._conflicted += conflicted
 
         for k, v in self._variables.items():
             if k in os.environ:
                 self._saved_variables[k] = os.environ[k]
 
-            os.environ[k] = os.path.expandvars(v)
+            os.environ[k] = os_ext.expandvars(v)
 
         self._loaded = True
 
@@ -119,23 +113,48 @@ class Environment:
 
         self._loaded = False
 
-    def emit_load_instructions(self, builder):
-        for stmt in self._load_stmts:
-            builder.verbatim(stmt)
+    def emit_load_commands(self):
+        rt = runtime()
+        emit_fn = {
+            'l': rt.modules_system.emit_load_commands,
+            'u': rt.modules_system.emit_unload_commands
+        }
+        module_ops = self._module_ops or [('l', m) for m in self._modules]
 
+        # Emit module commands
+        ret = []
+        for op, m in module_ops:
+            ret += emit_fn[op](m)
+
+        # Emit variable set commands
         for k, v in self._variables.items():
-            builder.set_variable(k, v, export=True)
+            ret.append('export %s=%s' % (k, v))
 
-    # FIXME: Does not correspond to the actual process in unload()
-    def emit_unload_instructions(self, builder):
-        for k, v in self._variables.items():
-            builder.unset_variable(k)
+        return ret
 
-        for m in self._modules:
-            builder.verbatim('module unload %s' % m)
+    def emit_unload_commands(self):
+        rt = runtime()
 
-        for m in self._conflicted:
-            builder.verbatim('module load %s' % m)
+        # Invert the logic of module operations, since we are unloading the
+        # environment
+        emit_fn = {
+            'l': rt.modules_system.emit_unload_commands,
+            'u': rt.modules_system.emit_load_commands
+        }
+
+        ret = []
+        for var in self._variables.keys():
+            ret.append('unset %s' % var)
+
+        if self._module_ops:
+            module_ops = reversed(self._module_ops)
+        else:
+            module_ops = (('l', m) for m in reversed(self._modules))
+
+        for op, m in module_ops:
+            ret += emit_fn[op](m)
+
+        return ret
 
     def __eq__(self, other):
         if not isinstance(other, type(self)):
@@ -145,10 +164,21 @@ class Environment:
                 set(self._modules) == set(other._modules) and
                 self._variables == other._variables)
 
-    def __repr__(self):
-        return debug.repr(self)
+    def details(self):
+        """Return a detailed description of this environment."""
+        variables = '\n'.join(' '*8 + '- %s=%s' % (k, v)
+                              for k, v in self.variables.items())
+        lines = [
+            self._name + ':',
+            '    modules: ' + ', '.join(self.modules),
+            '    variables:' + ('\n' if variables else '') + variables
+        ]
+        return '\n'.join(lines)
 
     def __str__(self):
+        return self.name
+
+    def __repr__(self):
         ret = "{0}(name='{1}', modules={2}, variables={3})"
         return ret.format(type(self).__name__, self.name,
                           self.modules, self.variables)
@@ -166,19 +196,18 @@ class EnvironmentSnapshot(Environment):
         self._variables = dict(os.environ)
         self._conflicted = []
 
-    def add_module(self, name):
-        raise EnvironError('environment snapshot is read-only')
-
-    def set_variable(self, name, value):
-        raise EnvironError('environment snapshot is read-only')
-
     def load(self):
         os.environ.clear()
         os.environ.update(self._variables)
         self._loaded = True
 
+    @property
+    def is_loaded(self):
+        raise NotImplementedError('is_loaded is not a valid property '
+                                  'of an environment snapshot')
+
     def unload(self):
-        raise EnvironError('cannot unload an environment snapshot')
+        raise NotImplementedError('cannot unload an environment snapshot')
 
 
 class save_environment:
@@ -211,57 +240,14 @@ class ProgEnvironment(Environment):
     :attr:`propagate` attribute to :class:`False`.
     """
 
-    #: The C compiler of this programming environment.
-    #:
-    #: :type: :class:`str`
-    cc = fields.StringField('cc')
-
-    #: The C++ compiler of this programming environment.
-    #:
-    #: :type: :class:`str` or :class:`None`
-    cxx = fields.StringField('cxx', allow_none=True)
-
-    #: The Fortran compiler of this programming environment.
-    #:
-    #: :type: :class:`str` or :class:`None`
-    ftn = fields.StringField('ftn', allow_none=True)
-
-    #: The preprocessor flags of this programming environment.
-    #:
-    #: :type: :class:`str` or :class:`None`
-    cppflags = fields.StringField('cppflags', allow_none=True)
-
-    #: The C compiler flags of this programming environment.
-    #:
-    #: :type: :class:`str` or :class:`None`
-    cflags = fields.StringField('cflags', allow_none=True)
-
-    #: The C++ compiler flags of this programming environment.
-    #:
-    #: :type: :class:`str` or :class:`None`
-    cxxflags = fields.StringField('cxxflags', allow_none=True)
-
-    #: The Fortran compiler flags of this programming environment.
-    #:
-    #: :type: :class:`str` or :class:`None`
-    fflags = fields.StringField('fflags', allow_none=True)
-
-    #: The linker flags of this programming environment.
-    #:
-    #: :type: :class:`str` or :class:`None`
-    ldflags = fields.StringField('ldflags', allow_none=True)
-
-    #: The include search path of this programming environment.
-    #:
-    #: :type: :class:`list` of :class:`str`
-    #: :default: ``[]``
-    include_search_path = fields.TypedListField('include_search_path', str)
-
-    #: Propagate the compilation flags to the ``make`` invocation.
-    #:
-    #: :type: :class:`bool`
-    #: :default: :class:`True`
-    propagate = fields.BooleanField('propagate')
+    _cc = fields.TypedField('_cc', str)
+    _cxx = fields.TypedField('_cxx', str)
+    _ftn = fields.TypedField('_ftn', str)
+    _cppflags = fields.TypedField('_cppflags', typ.List[str], type(None))
+    _cflags = fields.TypedField('_cflags', typ.List[str], type(None))
+    _cxxflags = fields.TypedField('_cxxflags', typ.List[str], type(None))
+    _fflags = fields.TypedField('_fflags', typ.List[str], type(None))
+    _ldflags = fields.TypedField('_ldflags', typ.List[str], type(None))
 
     def __init__(self,
                  name,
@@ -270,6 +256,7 @@ class ProgEnvironment(Environment):
                  cc='cc',
                  cxx='CC',
                  ftn='ftn',
+                 nvcc='nvcc',
                  cppflags=None,
                  cflags=None,
                  cxxflags=None,
@@ -277,126 +264,80 @@ class ProgEnvironment(Environment):
                  ldflags=None,
                  **kwargs):
         super().__init__(name, modules, variables)
-        self.cc  = cc
-        self.cxx = cxx
-        self.ftn = ftn
-        self.cppflags = cppflags
-        self.cflags   = cflags
-        self.cxxflags = cxxflags
-        self.fflags   = fflags
-        self.ldflags  = ldflags
-        self.include_search_path = []
-        self.propagate = True
+        self._cc = cc
+        self._cxx = cxx
+        self._ftn = ftn
+        self._nvcc = nvcc
+        self._cppflags = cppflags
+        self._cflags = cflags
+        self._cxxflags = cxxflags
+        self._fflags = fflags
+        self._ldflags = ldflags
 
-    def guess_language(self, filename):
-        ext = filename.split('.')[-1]
-        if ext in ['c']:
-            return 'C'
+    @property
+    def cc(self):
+        """The C compiler of this programming environment.
 
-        if ext in ['cc', 'cp', 'cxx', 'cpp', 'CPP', 'c++', 'C']:
-            return 'C++'
+        :type: :class:`str`
+        """
+        return self._cc
 
-        if ext in ['f', 'for', 'ftn', 'F', 'FOR', 'fpp', 'FPP', 'FTN',
-                   'f90', 'f95', 'f03', 'f08', 'F90', 'F95', 'F03', 'F08']:
-            return 'Fortran'
+    @property
+    def cxx(self):
+        """The C++ compiler of this programming environment.
 
-        if ext in ['cu']:
-            return 'CUDA'
+        :type: :class:`str` or :class:`None`
+        """
+        return self._cxx
 
-    def compile(self, sourcepath, makefile=None, executable=None,
-                lang=None, options=''):
+    @property
+    def ftn(self):
+        """The Fortran compiler of this programming environment.
 
-        if not os.path.exists(sourcepath):
-            raise FileNotFoundError(errno.ENOENT,
-                                    os.strerror(errno.ENOENT), sourcepath)
+        :type: :class:`str` or :class:`None`
+        """
+        return self._ftn
 
-        if os.path.isdir(sourcepath):
-            return self._compile_dir(sourcepath, makefile, options)
-        else:
-            return self._compile_file(sourcepath, executable, lang, options)
+    @property
+    def cppflags(self):
+        """The preprocessor flags of this programming environment.
 
-    def _compile_file(self, source_file, executable, lang, options):
-        if not executable:
-            # default executable, same as source_file without the extension
-            executable = os.path.join(os.path.dirname(source_file),
-                                      source_file.rsplit('.')[:-1][0])
+        :type: :class:`str` or :class:`None`
+        """
+        return self._cppflags
 
-        if not lang:
-            lang  = self.guess_language(source_file)
+    @property
+    def cflags(self):
+        """The C compiler flags of this programming environment.
 
-        # Replace None's with empty strings
-        cppflags = self.cppflags or ''
-        cflags   = self.cflags   or ''
-        cxxflags = self.cxxflags or ''
-        fflags   = self.fflags   or ''
-        ldflags  = self.ldflags  or ''
+        :type: :class:`str` or :class:`None`
+        """
+        return self._cflags
 
-        flags = [cppflags]
-        if lang == 'C':
-            compiler = self.cc
-            flags.append(cflags)
-        elif lang == 'C++':
-            compiler = self.cxx
-            flags.append(cxxflags)
-        elif lang == 'Fortran':
-            compiler = self.ftn
-            flags.append(fflags)
-        elif lang == 'CUDA':
-            compiler = 'nvcc'
-            flags.append(cxxflags)
-        else:
-            raise EnvironError('Unknown language: %s' % lang)
+    @property
+    def cxxflags(self):
+        """The C++ compiler flags of this programming environment.
 
-        # Append include search path
-        flags += ['-I' + d for d in self.include_search_path]
-        cmd = ('%s %s %s -o %s %s %s' % (compiler, ' '.join(flags),
-                                         source_file, executable,
-                                         ldflags, options))
-        try:
-            return os_ext.run_command(cmd, check=True)
-        except SpawnedProcessError as e:
-            # Re-raise as compilation error
-            raise CompilationError(command=e.command,
-                                   stdout=e.stdout,
-                                   stderr=e.stderr,
-                                   exitcode=e.exitcode) from None
+        :type: :class:`str` or :class:`None`
+        """
+        return self._cxxflags
 
-    def _compile_dir(self, source_dir, makefile, options):
-        if makefile:
-            cmd = 'make -C %s -f %s %s ' % (source_dir, makefile, options)
-        else:
-            cmd = 'make -C %s %s ' % (source_dir, options)
+    @property
+    def fflags(self):
+        """The Fortran compiler flags of this programming environment.
 
-        # Pass a set of predefined options to the Makefile
-        if self.propagate:
-            flags = ["CC='%s'"  % self.cc,
-                     "CXX='%s'" % self.cxx,
-                     "FC='%s'"  % self.ftn]
+        :type: :class:`str` or :class:`None`
+        """
+        return self._fflags
 
-            # Explicitly check against None here; the user may explicitly want
-            # to clear the flags
-            if self.cppflags is not None:
-                flags.append("CPPFLAGS='%s'" % self.cppflags)
+    @property
+    def ldflags(self):
+        """The linker flags of this programming environment.
 
-            if self.cflags is not None:
-                flags.append("CFLAGS='%s'" % self.cflags)
+        :type: :class:`str` or :class:`None`
+        """
+        return self._ldflags
 
-            if self.cxxflags is not None:
-                flags.append("CXXFLAGS='%s'" % self.cxxflags)
-
-            if self.fflags is not None:
-                flags.append("FFLAGS='%s'" % self.fflags)
-
-            if self.ldflags is not None:
-                flags.append("LDFLAGS='%s'" % self.ldflags)
-
-            cmd += ' '.join(flags)
-
-        try:
-            return os_ext.run_command(cmd, check=True)
-        except SpawnedProcessError as e:
-            # Re-raise as compilation error
-            raise CompilationError(command=e.command,
-                                   stdout=e.stdout,
-                                   stderr=e.stderr,
-                                   exitcode=e.exitcode) from None
+    @property
+    def nvcc(self):
+        return self._nvcc

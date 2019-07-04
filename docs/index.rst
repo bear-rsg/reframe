@@ -15,8 +15,6 @@ ReFrame also offers a high-level and flexible abstraction for writing sanity and
 Writing system regression tests in a high-level modern programming language, like Python, poses a great advantage in organizing and maintaining the tests.
 Users can create their own test hierarchies or test factories for generating multiple tests at the same time and they can also customize them in a simple and expressive way.
 
-For versions 2.6.1 and older, please refer to `this documentation <_old/index.html>`__.
-
 Use Cases
 =========
 
@@ -33,10 +31,10 @@ You can always find the latest release `here <https://github.com/eth-cscs/refram
 Publications
 ============
 
+* `Presentation <https://drive.google.com/file/d/1sIecW59E-AvhD-vl6c6QGXM14UKNzgo_/view?usp=sharing>`__ & `Demo <https://asciinema.org/a/6SQJTaRe2zrMInV92X0yb2gTh>`__ @ `SC18 <https://sc18.supercomputing.org/>`__
+* Presentation [`pdf <https://github.com/eth-cscs/UserLabDay/blob/master/slides/ci_and_regression/ReFrame_CI.pdf>`__] [`pptx <https://github.com/eth-cscs/UserLabDay/blob/master/slides/ci_and_regression/ReFrame_CI.pptx>`__] @ `CSCS User Lab Day 2018 <https://github.com/eth-cscs/UserLabDay>`__
 * `Presentation <_static/files/reframe-hpac18-slides.pdf>`__ & `Demo1 <https://asciinema.org/a/kAETsA1ojG6L7dkzow8opEGvr>`__,  `Demo2 <https://asciinema.org/a/LLcOToWYX4gRIfrcb1GpmvkuB>`__ @ `HPC Advisory Council 2018 <http://www.hpcadvisorycouncil.com/events/2018/swiss-workshop/>`__
-
 * `Presentation <_static/files/reframe-bof-sc17-slides.pdf>`__ & `Demo <https://asciinema.org/a/kBZfdV0rmc0PCd84zxk6nAojG>`__ @ `SC17 <https://sc17.supercomputing.org/>`__
-
 * `Presentation <_static/files/reframe-cug17-slides.pdf>`__ @ `CUG 2017 <https://cug.org/cug-2017/>`__
 
 

@@ -4,7 +4,7 @@
 
 
 class ReframeSettings:
-    reframe_module = 'reframe'
+    reframe_module = None
     job_poll_intervals = [1, 2, 3]
     job_submit_timeout = 60
     checks_path = ['checks/']
@@ -90,7 +90,8 @@ class ReframeSettings:
                     '%(check_perf_var)s=%(check_perf_value)s|'
                     'ref=%(check_perf_ref)s '
                     '(l=%(check_perf_lower_thres)s, '
-                    'u=%(check_perf_upper_thres)s)'
+                    'u=%(check_perf_upper_thres)s)|'
+                    '%(check_perf_unit)s'
                 ),
                 'append': True
             }

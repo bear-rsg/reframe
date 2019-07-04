@@ -4,14 +4,14 @@
 
 import reframe as rfm
 import reframe.utility.sanity as sn
-from reframe.core.exceptions import ReframeError, SanityError
+from reframe.core.exceptions import ReframeError, PerformanceError
 
 
 class BaseFrontendCheck(rfm.RunOnlyRegressionTest):
     def __init__(self):
         super().__init__()
         self.local = True
-        self.executable = 'echo hello && echo perf: 10'
+        self.executable = 'echo hello && echo perf: 10 Gflop/s'
         self.sanity_patterns = sn.assert_found('hello', self.stdout)
         self.tags = {type(self).__name__}
         self.maintainers = ['VK']
@@ -71,11 +71,11 @@ class PerformanceFailureCheck(BaseFrontendCheck):
         self.valid_systems = ['*']
         self.valid_prog_environs = ['*']
         self.perf_patterns = {
-            'perf': sn.extractsingle('perf: (\d+)', self.stdout, 1, int)
+            'perf': sn.extractsingle(r'perf: (\d+)', self.stdout, 1, int)
         }
         self.reference = {
             '*': {
-                'perf': (20, -0.1, 0.1)
+                'perf': (20, -0.1, 0.1, 'Gflop/s')
             }
         }
 
@@ -91,7 +91,7 @@ class CustomPerformanceFailureCheck(BaseFrontendCheck):
         self.strict_check = False
 
     def check_performance(self):
-        raise SanityError('performance failure')
+        raise PerformanceError('performance failure')
 
 
 class KeyboardInterruptCheck(BaseFrontendCheck):
@@ -152,6 +152,22 @@ class SleepCheck(BaseFrontendCheck):
         self.valid_systems = ['*']
         self.valid_prog_environs = ['*']
         SleepCheck._next_id += 1
+
+
+class SleepCheckPollFail(SleepCheck):
+    """Emulate a test failing in the polling phase."""
+
+    def poll(self):
+        raise ValueError
+
+
+class SleepCheckPollFailLate(SleepCheck):
+    """Emulate a test failing in the polling phase
+    after the test has finished."""
+
+    def poll(self):
+        if self._job.finished():
+            raise ValueError
 
 
 class RetriesCheck(BaseFrontendCheck):

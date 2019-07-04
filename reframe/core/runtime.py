@@ -5,7 +5,6 @@
 import os
 import functools
 import re
-import shutil
 import socket
 from datetime import datetime
 
@@ -71,7 +70,16 @@ class HostSystem:
         return None
 
     def __str__(self):
-        return str(self._system)
+        partitions = '\n'.join(re.sub('(?m)^', 6*' ', '- ' + str(p))
+                               for p in self.partitions)
+        lines = [
+            '%s [%s]:' % (self._name, self._descr),
+            '    hostnames: ' + ', '.join(self._hostnames),
+            '    modules_system: ' + str(self._modules_system),
+            '    resourcesdir: ' + self._resourcesdir,
+            '    partitions:\n' + partitions,
+        ]
+        return '\n'.join(lines)
 
     def __repr__(self):
         return 'HostSystem(%r, %r)' % (self._system, self._partname)
@@ -93,24 +101,39 @@ class HostResources:
     #:    Users may not set this field.
     #:
     prefix = fields.AbsolutePathField('prefix')
-    outputdir = fields.AbsolutePathField('outputdir', allow_none=True)
-    stagedir  = fields.AbsolutePathField('stagedir', allow_none=True)
+    outputdir = fields.AbsolutePathField('outputdir', type(None))
+    stagedir = fields.AbsolutePathField('stagedir', type(None))
+    perflogdir = fields.AbsolutePathField('perflogdir', type(None))
 
     def __init__(self, prefix=None, stagedir=None,
-                 outputdir=None, timefmt=None):
+                 outputdir=None, perflogdir=None, timefmt=None):
         self.prefix = prefix or '.'
-        self.stagedir  = stagedir
+        self.stagedir = stagedir
         self.outputdir = outputdir
-        self._timestamp = datetime.now()
+        self.perflogdir = perflogdir
         self.timefmt = timefmt
+        self._timestamp = datetime.now()
 
     def _makedir(self, *dirs, wipeout=False):
         ret = os.path.join(*dirs)
         if wipeout:
-            shutil.rmtree(ret, True)
+            os_ext.rmtree(ret, ignore_errors=True)
 
         os.makedirs(ret, exist_ok=True)
         return ret
+
+    def _format_dirs(self, *dirs):
+        try:
+            last = dirs[-1]
+        except IndexError:
+            return dirs
+
+        current_run = runtime().current_run
+        if current_run == 0:
+            return dirs
+
+        last += '_retry%s' % current_run
+        return (*dirs[:-1], last)
 
     @property
     def timestamp(self):
@@ -132,11 +155,20 @@ class HostResources:
         else:
             return os.path.join(self.stagedir, self.timestamp)
 
+    @property
+    def perflog_prefix(self):
+        if self.perflogdir is None:
+            return os.path.join(self.prefix, 'perflogs')
+        else:
+            return self.perflogdir
+
     def make_stagedir(self, *dirs, wipeout=True):
-        return self._makedir(self.stage_prefix, *dirs, wipeout=wipeout)
+        return self._makedir(self.stage_prefix,
+                             *self._format_dirs(*dirs), wipeout=wipeout)
 
     def make_outputdir(self, *dirs, wipeout=True):
-        return self._makedir(self.output_prefix, *dirs, wipeout=wipeout)
+        return self._makedir(self.output_prefix,
+                             *self._format_dirs(*dirs), wipeout=wipeout)
 
 
 class RuntimeContext:
@@ -166,9 +198,10 @@ class RuntimeContext:
 
         self._resources = HostResources(
             self._system.prefix, self._system.stagedir,
-            self._system.outputdir, self._system.logdir)
+            self._system.outputdir, self._system.perflogdir)
         self._modules_system = ModulesSystem.create(
             self._system.modules_system)
+        self._current_run = 0
 
     def _autodetect_system(self):
         """Auto-detect system."""
@@ -196,6 +229,13 @@ class RuntimeContext:
         except KeyError:
             raise ConfigError('unknown execution mode: %s' % name) from None
 
+    def next_run(self):
+        self._current_run += 1
+
+    @property
+    def current_run(self):
+        return self._current_run
+
     @property
     def system(self):
         """The current host system.
@@ -220,6 +260,9 @@ class RuntimeContext:
         """
         return self._modules_system
 
+    def show_config(self):
+        """Return a textual representation of the current runtime."""
+        return str(self._system)
 
 
 # Global resources for the current host

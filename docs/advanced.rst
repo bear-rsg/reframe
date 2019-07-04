@@ -6,8 +6,8 @@ In this section, we are going to show some more elaborate use cases of ReFrame.
 Through the use of more advanced examples, we will demonstrate further customization options which modify the default options of the ReFrame pipeline.
 The corresponding scripts as well as the source code of the examples discussed here can be found in the directory ``tutorial/advanced``.
 
-Leveraging Makefiles
---------------------
+Working with Makefiles
+----------------------
 
 We have already shown how you can compile a single source file associated with your regression test.
 In this example, we show how ReFrame can leverage Makefiles to build executables.
@@ -40,29 +40,50 @@ The contents of this regression test are the following (``tutorial/advanced/adva
 
 .. literalinclude:: ../tutorial/advanced/advanced_example1.py
 
-The important bit here is the ``compile()`` method.
+The important bit here is how we set up the build system for this test:
 
 .. literalinclude:: ../tutorial/advanced/advanced_example1.py
-  :lines: 18-20
+  :lines: 14-15
   :dedent: 4
 
-As in the simple single source file examples we showed in the `tutorial <tutorial.html>`__, we use the current programming environment's flags for modifying the compilation.
-ReFrame will then compile the regression test source code as by invoking ``make`` as follows:
 
-.. code-block:: bash
+First, we set the build system to :attr:`Make <reframe.core.buildsystems.Make>` and then set the preprocessor flags for the compilation.
+ReFrame will invoke ``make`` as follows:
 
-  make CC=cc CXX=CC FC=ftn CPPFLAGS=-DMESSAGE
+.. code::
 
-Notice, how ReFrame passes all the programming environment's variables to the ``make`` invocation.
-It is important to note here that, if a set of flags is set to :class:`None` (the default, if not otherwise set in the `ReFrame's configuration <configure.html#environments-configuration>`__), these are not passed to ``make``.
-You can also completely disable the propagation of any flags to ``make`` by setting :attr:`self.propagate = False <reframe.core.environments.ProgEnvironment.propagate>` in your regression test.
+  make -j CC='cc' CXX='CC' FC='ftn' NVCC='nvcc' CPPFLAGS='-DMESSAGE'
 
-At this point it is useful also to note that you can also use a custom Makefile, not named ``Makefile`` or after any other standard Makefile name.
-In this case, you can pass the custom Makefile name as an argument to the compile method of the base :class:`RegressionTest <reframe.core.pipeline.RegressionTest>` class as follows:
+The compiler variables (``CC``, ``CXX`` etc.) are set based on the corresponding values specified in the `coniguration of the current environment <configure.html#environments-configuration>`__.
+You may instruct the build system to ignore the default values from the environment by setting the following:
 
 .. code-block:: python
 
-  super().compile(makefile='Makefile_custom')
+  self.build_system.flags_from_environ = False
+
+In this case, ``make`` will be invoked as follows:
+
+.. code::
+
+  make -j CPPFLAGS='-DMESSAGE'
+
+Notice that the ``-j`` option is always generated.
+If you want to limit build concurrency, you can do it as follows:
+
+.. code-block:: python
+
+  self.build_system.max_concurrency = 4
+
+
+Finally, you may also customize the name of the ``Makefile``.
+You can achieve that by setting the corresponding variable of the :class:`Make <reframe.core.buildsystems.Make>` build system:
+
+.. code-block:: python
+
+  self.build_system.makefile = 'Makefile_custom'
+
+
+More details on ReFrame's build systems, you may find `here <reference.html#build-systems>`__.
 
 
 Retrieving the source code from a Git repository
@@ -95,6 +116,31 @@ ReFrame will attempt to clone this repository inside the stage directory by exec
    ReFrame recognizes only URLs in the :attr:`sourcesdir` attribute and requires passwordless access to the repository.
    This means that the SCP-style repository specification will not be accepted.
    You will have to specify it as URL using the ``ssh://`` protocol (see `Git documentation page <https://git-scm.com/docs/git-clone#_git_urls_a_id_urls_a>`__).
+
+
+Add a configuration step before compiling the code
+==================================================
+
+It is often the case that a configuration step is needed before compiling a code with ``make``.
+To address this kind of projects, ReFrame aims to offer specific abstractions for "configure-make"-style build systems.
+It supports `CMake-based <https://cmake.org/>`__ projects through the :class:`CMake <reframe.core.buildsystems.CMake>` build system, as well as `Autotools-based <https://www.gnu.org/software/automake/>`__ projects through the :class:`Autotools <reframe.core.buildsystems.Autotools>` build system.
+
+For other build systems, you can achieve the same effect using the :class:`Make <reframe.core.buildsystems.Make>` build system and the :attr:`prebuild_cmd <reframe.core.pipeline.RegressionTest.prebuild_cmd>` for performing the configuration step.
+The following code snippet will configure a code with ``./custom_configure`` before invoking ``make``:
+
+.. code-block:: python
+
+  self.prebuild_cmd = ['./custom_configure -with-mylib']
+  self.build_system = 'Make'
+  self.build_system.cppflags = ['-DHAVE_FOO']
+  self.build_system.flags_from_environ = False
+
+The generated build script then will have the following lines:
+
+.. code-block:: bash
+
+  ./custom_configure -with-mylib
+  make -j CPPFLAGS='-DHAVE_FOO'
 
 
 Implementing a Run-Only Regression Test
@@ -159,10 +205,10 @@ At runtime, ReFrame will generate the following instructions in the shell script
 
 This ensures that the environment of the test is also set correctly at runtime.
 
-Finally, as already mentioned `previously <#leveraging-makefiles>`__, since the ``Makefile`` name is not one of the standard ones, it has to be passed as an argument to the :func:`compile <reframe.core.pipeline.RegressionTest.compile>` method of the base :class:`RegressionTest <reframe.core.pipeline.RegressionTest>` class as follows:
+Finally, as already mentioned `previously <#working-with-makefiles>`__, since the name of the makefile is not one of the standard ones, it must be set explicitly in the build system:
 
 .. literalinclude:: ../tutorial/advanced/advanced_example4.py
-  :lines: 21
+  :lines: 17
   :dedent: 8
 
 Setting a Time Limit for Regression Tests
@@ -254,8 +300,8 @@ The generated job script for this example is the following:
    #SBATCH --job-name="prerun_demo_check_daint_gpu_PrgEnv-gnu"
    #SBATCH --time=0:10:0
    #SBATCH --ntasks=1
-   #SBATCH --output=/path/to/stage/gpu/prerun_demo_check/PrgEnv-gnu/prerun_demo_check.out
-   #SBATCH --error=/path/to/stage/gpu/prerun_demo_check/PrgEnv-gnu/prerun_demo_check.err
+   #SBATCH --output=prerun_demo_check.out
+   #SBATCH --error=prerun_demo_check.err
    #SBATCH --constraint=gpu
    module load daint-gpu
    module unload PrgEnv-cray
@@ -310,7 +356,7 @@ The framework will try to generate unique names for the generated tests by strin
 .. code-block:: none
 
    Command line: ./bin/reframe -C tutorial/config/settings.py -c tutorial/advanced/advanced_example8.py -l
-   Reframe version: 2.13-dev0
+   Reframe version: 2.15-dev1
    Launched by user: XXX
    Launched on host: daint101
    Reframe paths
@@ -323,9 +369,7 @@ The framework will try to generate unique names for the generated tests by strin
    List of matched checks
    ======================
      * MatrixVectorTest_MPI (Matrix-vector multiplication test (MPI))
-           tags: [tutorial], maintainers: [you-can-type-your-email-here]
      * MatrixVectorTest_OpenMP (Matrix-vector multiplication test (OpenMP))
-           tags: [tutorial], maintainers: [you-can-type-your-email-here]
    Found 2 check(s).
 
 
@@ -353,3 +397,52 @@ Another way, which is quite useful if you want to generate lots of different tes
 
    Combining parameterized tests and test class hierarchies can offer you a very flexible way for generating multiple related tests at once keeping at the same time the maintenance cost low.
    We use this technique extensively in our tests.
+
+
+Flexible Regression Tests
+-------------------------
+
+.. versionadded:: 2.15
+
+ReFrame can automatically set the number of tasks of a particular test, if its :attr:`num_tasks <reframe.core.pipeline.RegressionTest.num_tasks>` attribute is set to ``<=0``.
+In ReFrame's terminology, such tests are called `flexible`.
+Negative values indicate the minimum number of tasks that is acceptable for this test (a value of ``-4`` indicates a minimum acceptable number of ``4`` tasks).
+A zero value indicates the default minimum number of tasks which is equal to :attr:`num_tasks_per_node <reframe.core.pipeline.RegressionTest.num_tasks_per_node>`.
+
+By default, ReFrame will spawn such a test on all the idle nodes of the current system partition, but this behavior can be adjusted from the command-line.
+Flexible tests are very useful for diagnostics tests, e.g., tests for checking the health of a whole set nodes.
+In this example, we demonstrate this feature through a simple test that runs ``hostname``.
+The test will verify that all the nodes print the expected host name:
+
+.. literalinclude:: ../tutorial/advanced/advanced_example9.py
+
+The first thing to notice in this test is that :attr:`num_tasks <reframe.core.pipeline.RegressionTest.num_tasks>` is set to ``0``.
+This is a requirement for flexible tests:
+
+.. literalinclude:: ../tutorial/advanced/advanced_example9.py
+  :lines: 13
+  :dedent: 8
+
+The sanity function of this test simply counts the host names and verifies that they are as many as expected:
+
+.. literalinclude:: ../tutorial/advanced/advanced_example9.py
+  :lines: 15-18
+  :dedent: 8
+
+Notice, however, that the sanity check does not use :attr:`num_tasks` for verification, but rather a different, custom attribute, the ``num_tasks_assigned``.
+This happens for two reasons:
+
+  a. At the time the sanity check expression is created, :attr:`num_tasks` is ``0``.
+     So the actual number of tasks assigned must be a deferred expression as well.
+  b. When ReFrame will determine and set the number of tasks of the test, it will not set the :attr:`num_tasks` attribute of the :class:`RegressionTest`.
+     It will only set the corresponding attribute of the associated job instance.
+
+Here is how the new deferred attribute is defined:
+
+.. literalinclude:: ../tutorial/advanced/advanced_example9.py
+  :lines: 22-25
+  :dedent: 4
+
+
+The behavior of the flexible task allocation is controlled by the ``--flex-alloc-tasks`` command line option.
+See the corresponding `section <running.html#controlling-the-flexible-task-allocation>`__ for more information.

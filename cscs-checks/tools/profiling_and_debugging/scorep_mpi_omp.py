@@ -1,40 +1,37 @@
 import os
+
+import reframe as rfm
 import reframe.utility.sanity as sn
 
-from reframe.core.pipeline import RegressionTest
 
-
-class ScorepHybrid(RegressionTest):
-    def __init__(self, lang, **kwargs):
-        super().__init__('scorep_mpi_omp_%s' % lang.replace('+', 'p'),
-                         os.path.dirname(__file__), **kwargs)
-
+@rfm.required_version('>=2.14')
+@rfm.parameterized_test(['C++'], ['F90'])
+class ScorepHybrid(rfm.RegressionTest):
+    def __init__(self, lang):
+        super().__init__()
+        self.name = 'scorep_mpi_omp_%s' % lang.replace('+', 'p')
         self.descr = 'SCORE-P %s check' % lang
         self.valid_systems = ['daint:gpu', 'daint:mc', 'dom:gpu', 'dom:mc']
-
-        self.valid_prog_environs = ['PrgEnv-gnu', 'PrgEnv-intel', 'PrgEnv-pgi']
-
-        self.scorep_modules = {
-            'PrgEnv-gnu': ['Score-P/3.1-CrayGNU-17.08'],
-            'PrgEnv-intel': ['Score-P/3.1-CrayIntel-17.08'],
-            'PrgEnv-pgi': ['Score-P/3.1-CrayPGI-17.08']
-        }
-
+        self.valid_prog_environs = ['PrgEnv-gnu', 'PrgEnv-intel', 'PrgEnv-pgi',
+                                    'PrgEnv-cray']
         self.prgenv_flags = {
-            'PrgEnv-cray': '-g -homp',
-            'PrgEnv-gnu': '-g -fopenmp',
-            'PrgEnv-intel': '-g -openmp',
-            'PrgEnv-pgi': '-g -mp'
+            'PrgEnv-cray': ['-g', '-homp'],
+            'PrgEnv-gnu': ['-g', '-fopenmp'],
+            'PrgEnv-intel': ['-g', '-openmp'],
+            'PrgEnv-pgi': ['-g', '-mp']
         }
-
-        self.executable = 'jacobi'
-        self.makefile = 'Makefile_scorep_mpi_omp'
         self.sourcesdir = os.path.join('src', lang)
+        self.executable = 'jacobi'
+        self.build_system = 'Make'
+        self.build_system.makefile = 'Makefile_scorep_mpi_omp'
+        # NOTE: Restrict concurrency to allow creation of Fortran modules
+        if lang == 'F90':
+            self.build_system.max_concurrency = 1
+
         self.num_tasks = 3
         self.num_tasks_per_node = 3
         self.num_cpus_per_task = 4
         self.num_iterations = 200
-
         self.variables = {
             'OMP_NUM_THREADS': str(self.num_cpus_per_task),
             'ITERATIONS': str(self.num_iterations),
@@ -43,7 +40,6 @@ class ScorepHybrid(RegressionTest):
             'OMP_PROC_BIND': 'true',
             'SCOREP_TIMER': 'clock_gettime'
         }
-
         cpu_count = self.num_cpus_per_task * self.num_tasks_per_node
         self.otf2_file = 'otf2.txt'
         self.sanity_patterns = sn.all([
@@ -53,39 +49,36 @@ class ScorepHybrid(RegressionTest):
                 'line')), 4 * self.num_iterations * cpu_count),
             sn.assert_not_found('warning|WARNING', self.stderr)
         ])
-
         self.maintainers = ['MK', 'JG']
         self.tags = {'production'}
-
         # additional program call in order to generate the tracing output for
         # the sanity check
         self.post_run = [
             'otf2-print scorep-*/traces.otf2 > %s' % self.otf2_file
         ]
 
-    def compile(self):
-        prgenv_flags = self.prgenv_flags[self.current_environ.name]
-        self.current_environ.cflags   = prgenv_flags
-        self.current_environ.cxxflags = prgenv_flags
-        self.current_environ.fflags   = prgenv_flags
-        self.current_environ.ldflags  = '-lm'
-        super().compile(makefile=self.makefile,
-                        options="PREP='scorep --nopreprocess "
-                                " --mpp=mpi --thread=omp'")
-
     def setup(self, partition, environ, **job_opts):
+        scorep_ver = '5.0'
+        tc_ver = '19.03'
+        cu_ver = '10.0'
+        self.scorep_modules = {
+            'PrgEnv-gnu': ['Score-P/%s-CrayGNU-%s' % (scorep_ver, tc_ver)],
+            'PrgEnv-intel': ['Score-P/%s-CrayIntel-%s' % (scorep_ver, tc_ver)],
+            'PrgEnv-pgi': ['Score-P/%s-CrayPGI-%s' % (scorep_ver, tc_ver)],
+            'PrgEnv-cray': ['Score-P/%s-CrayCCE-%s' % (scorep_ver, tc_ver)]
+        }
         if partition.fullname in ['daint:gpu', 'dom:gpu']:
             self.scorep_modules['PrgEnv-gnu'] = [
-                'Score-P/3.1-CrayGNU-17.08-cuda-8.0'
+                'Score-P/%s-CrayGNU-%s-cuda-%s' % (scorep_ver, tc_ver, cu_ver)
             ]
 
         self.modules = self.scorep_modules[environ.name]
         super().setup(partition, environ, **job_opts)
-
-
-def _get_checks(**kwargs):
-    ret = []
-    for lang in ['C', 'C++', 'F90']:
-        ret.append(ScorepHybrid(lang, **kwargs))
-
-    return ret
+        prgenv_flags = self.prgenv_flags[self.current_environ.name]
+        self.build_system.cflags = prgenv_flags
+        self.build_system.cxxflags = prgenv_flags
+        self.build_system.fflags = prgenv_flags
+        self.build_system.ldflags = ['-lm']
+        self.build_system.options = [
+            "PREP='scorep --nopreprocess --mpp=mpi --thread=omp'"
+        ]

@@ -1,6 +1,7 @@
 import abc
 
-from reframe.core.fields import TypedListField
+import reframe.core.fields as fields
+import reframe.utility.typecheck as typ
 
 
 class JobLauncher(abc.ABC):
@@ -23,7 +24,7 @@ class JobLauncher(abc.ABC):
     #:
     #: :type: :class:`list` of :class:`str`
     #: :default: ``[]``
-    options = TypedListField('options', str)
+    options = fields.TypedField('options', typ.List[str])
 
     def __init__(self, options=[]):
         self.options = list(options)
@@ -40,9 +41,8 @@ class JobLauncher(abc.ABC):
             executable).
         """
 
-    def emit_run_command(self, job, builder):
-        return builder.verbatim(
-            ' '.join(self.command(job) + self.options + [job.command]))
+    def run_command(self, job):
+        return ' '.join(self.command(job) + self.options)
 
 
 class LauncherWrapper(JobLauncher):

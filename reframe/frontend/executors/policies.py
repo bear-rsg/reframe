@@ -31,17 +31,20 @@ class SerialExecutionPolicy(ExecutionPolicy):
         super().__init__()
         self._tasks = []
 
-    def run_check(self, check, partition, environ):
-        super().run_check(check, partition, environ)
+    def runcase(self, case):
+        super().runcase(case)
+        check, partition, environ = case
+
         self.printer.status(
-            'RUN', "%s on %s using %s" %
+            'RUN', '%s on %s using %s' %
             (check.name, partition.fullname, environ.name)
         )
-        task = RegressionTask(check)
+        task = RegressionTask(case)
         self._tasks.append(task)
         self.stats.add_task(task)
         try:
             task.setup(partition, environ,
+                       sched_flex_alloc_tasks=self.sched_flex_alloc_tasks,
                        sched_account=self.sched_account,
                        sched_partition=self.sched_partition,
                        sched_reservation=self.sched_reservation,
@@ -50,6 +53,7 @@ class SerialExecutionPolicy(ExecutionPolicy):
                        sched_options=self.sched_options)
 
             task.compile()
+            task.compile_wait()
             task.run()
             task.wait()
             if not self.skip_sanity_check:
@@ -273,18 +277,21 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
             self._finalizer_thread.start()
         self._finalizer_thread.retire_task(task)
 
-    def enter_partition(self, c, p):
-        self._running_tasks_counts.setdefault(p.fullname, 0)
-        self._ready_tasks.setdefault(p.fullname, [])
-        self._max_jobs.setdefault(p.fullname, p.max_jobs)
+    def runcase(self, case):
+        super().runcase(case)
+        check, partition, environ = case
 
-    def run_check(self, check, partition, environ):
-        super().run_check(check, partition, environ)
-        task = RegressionTask(check, self.task_listeners)
+        # Set partition-based counters, if not set already
+        self._running_tasks_counts.setdefault(partition.fullname, 0)
+        self._ready_tasks.setdefault(partition.fullname, [])
+        self._max_jobs.setdefault(partition.fullname, partition.max_jobs)
+
+        task = RegressionTask(case, self.task_listeners)
         self._tasks.append(task)
         self.stats.add_task(task)
         try:
             task.setup(partition, environ,
+                       sched_flex_alloc_tasks=self.sched_flex_alloc_tasks,
                        sched_account=self.sched_account,
                        sched_partition=self.sched_partition,
                        sched_reservation=self.sched_reservation,
@@ -307,6 +314,8 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
                 self.printer.status('HOLD', task.check.info(), just='right')
                 self._ready_tasks[partname].append(task)
         except TaskExit:
+            if not task.failed:
+                self._reschedule(task, load_env=False)
             return
         except ABORT_REASONS as e:
             if not task.failed:
@@ -349,6 +358,7 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
             task.resume()
 
         task.compile()
+        task.compile_wait()
         task.run()
 
     def _reschedule_all(self):
@@ -375,36 +385,36 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
         pollrate = PollRateFunction(1.0, 60)
         num_polls = 0
         t_start = datetime.now()
-        try:
-            while self._running_tasks:
-                getlogger().debug('running tasks: %s' % len(self._running_tasks))
-                num_polls += len(self._running_tasks)
-                try:
-                    self._poll_tasks()
-                    self._reschedule_all()
-                    t_elapsed = (datetime.now() - t_start).total_seconds()
-                    real_rate = num_polls / t_elapsed
+        while self._running_tasks:
+            getlogger().debug('running tasks: %s' % len(self._running_tasks))
+            num_polls += len(self._running_tasks)
+            try:
+                self._poll_tasks()
+                self._reschedule_all()
+                
+                t_elapsed = (datetime.now() - t_start).total_seconds()
+                real_rate = num_polls / t_elapsed
+                getlogger().debug(
+                    'polling rate (real): %.3f polls/sec' % real_rate)
+
+                if len(self._running_tasks):
+                    desired_rate = pollrate(t_elapsed, real_rate)
                     getlogger().debug(
-                        'polling rate (real): %.3f polls/sec' % real_rate)
+                        'polling rate (desired): %.3f' % desired_rate)
+                    t = len(self._running_tasks) / desired_rate
+                    getlogger().debug('sleeping: %.3fs' % t)
+                    time.sleep(t)
 
-                    if len(self._running_tasks):
-                        desired_rate = pollrate(t_elapsed, real_rate)
-                        getlogger().debug(
-                            'polling rate (desired): %.3f' % desired_rate)
-                        t = len(self._running_tasks) / desired_rate
-                        getlogger().debug('sleeping: %.3fs' % t)
-                        time.sleep(t)
-                except TaskExit:
-                    pass
+            except TaskExit:
+                self._reschedule_all()
+            except ABORT_REASONS as e:
+                self._failall(e)
+                raise
 
-            getlogger().debug('run all tasks. finalizing tasks...')
-            if self._finalizer_thread is not None:
-                self._finalizer_thread.finalize_tasks()
-            self._finalizer_thread = None
-
-        except ABORT_REASONS as e:
-            self._failall(e)
-            raise
+        getlogger().debug('run all tasks. finalizing tasks...')
+        if self._finalizer_thread is not None:
+            self._finalizer_thread.finalize_tasks()
+        self._finalizer_thread = None
 
         self.printer.separator('short single line',
                                'all spawned checks have finished\n')
