@@ -385,15 +385,20 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
         pollrate = PollRateFunction(1.0, 60)
         num_polls = 0
         t_start = datetime.now()
-        try:
-            while self._running_tasks:
-                getlogger().debug('running tasks: %s' % len(self._running_tasks))
-                num_polls += len(self._running_tasks)
-                try:
-                    self._poll_tasks()
-                    self._reschedule_all()
-                    t_elapsed = (datetime.now() - t_start).total_seconds()
-                    real_rate = num_polls / t_elapsed
+        while self._running_tasks:
+            getlogger().debug('running tasks: %s' % len(self._running_tasks))
+            num_polls += len(self._running_tasks)
+            try:
+                self._poll_tasks()
+                self._reschedule_all()
+                
+                t_elapsed = (datetime.now() - t_start).total_seconds()
+                real_rate = num_polls / t_elapsed
+                getlogger().debug(
+                    'polling rate (real): %.3f polls/sec' % real_rate)
+
+                if len(self._running_tasks):
+                    desired_rate = pollrate(t_elapsed, real_rate)
                     getlogger().debug(
                         'polling rate (desired): %.3f' % desired_rate)
                     t = len(self._running_tasks) / desired_rate
@@ -405,6 +410,11 @@ class AsynchronousExecutionPolicy(ExecutionPolicy, TaskEventListener):
             except ABORT_REASONS as e:
                 self._failall(e)
                 raise
+
+        getlogger().debug('run all tasks. finalizing tasks...')
+        if self._finalizer_thread is not None:
+            self._finalizer_thread.finalize_tasks()
+        self._finalizer_thread = None
 
         self.printer.separator('short single line',
                                'all spawned checks have finished\n')

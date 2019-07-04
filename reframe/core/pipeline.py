@@ -196,9 +196,9 @@ class RegressionTest:
     #: Instead, they are emitted in the generated job script just before the
     #: environment of the job script is loaded.
     #:
-    #: :type: :class:`list` of :class:`str`
+    #: :type: :class:`List[str]`
     #: :default: ``[]``
-    pre_environ = fields.TypedListField('pre_environ', str)
+    pre_environ = fields.TypedField('pre_environ', typ.List[str])
 
     #: List of shell commands to execute before launching this job.
     #:

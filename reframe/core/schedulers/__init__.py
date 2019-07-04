@@ -270,7 +270,7 @@ class Job(abc.ABC):
             
             rt = runtime()
             if rt.system.modules_system_purge:
-                builder.verbatim('%s' % rt.modules_system.emit_unload_all())
+                builder.write_prolog(rt.modules_system.emit_unload_all())
             
             for e in environs:
                 builder.write(e.emit_load_commands())
