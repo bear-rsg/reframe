@@ -127,11 +127,11 @@ class TestStats:
 
                 report.append('   - %s' % t.check.current_environ)
 
-            for ref in t.check.perfvalues.values():
-                var = ref[0]
-                val = ref[1]
+            for key, ref in t.check.perfvalues.items():
+                var = key.split(':')[-1]
+                val = ref[0]
                 try:
-                    unit = ref[5]
+                    unit = ref[4]
                 except IndexError:
                     unit = '(no unit specified)'
 
