@@ -162,6 +162,7 @@ class Job:
                  script_filename=None,
                  stdout=None,
                  stderr=None,
+                 pre_environ=[],
                  sched_flex_alloc_nodes=None,
                  sched_access=[],
                  sched_account=None,
@@ -180,6 +181,7 @@ class Job:
         self.num_cpus_per_task = None
         self.use_smt = None
         self.time_limit = None
+        self.deadline = None
         self.options = sched_options or []
 
         # Live job information; to be filled during job's lifetime by the
@@ -269,7 +271,7 @@ class Job:
     def completion_time(self):
         return self.scheduler.completion_time(self) or self._completion_time
 
-    def prepare(self, commands, environs=None, **gen_opts):
+    def prepare(self, commands, environs=None, pre_environ=None, **gen_opts):
         environs = environs or []
         if self.num_tasks <= 0:
             num_tasks_per_node = self.num_tasks_per_node or 1
@@ -295,6 +297,8 @@ class Job:
         with shell.generate_script(self.script_filename,
                                    **gen_opts) as builder:
             builder.write_prolog(self.scheduler.emit_preamble(self))
+            for c in pre_environ:
+                builder.write_body(c)
             builder.write(env.emit_load_commands(*environs))
             for c in commands:
                 builder.write_body(c)
