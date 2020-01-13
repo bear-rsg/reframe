@@ -26,14 +26,14 @@ class NCOBaseTest(rfm.RunOnlyRegressionTest):
                               'kesch:pn']
         if self.current_system.name == 'kesch':
             self.exclusive_access = True
-            self.valid_prog_environs = ['PrgEnv-gnu-nompi', 'PrgEnv-gnu-c2sm']
+            self.valid_prog_environs = ['PrgEnv-gnu-nompi']
             self.modules = ['nco']
         else:
-            self.valid_prog_environs = ['PrgEnv-gnu', 'PrgEnv-gnu-c2sm']
+            self.valid_prog_environs = ['PrgEnv-gnu']
             self.modules = ['NCO']
 
-        self.maintainers = ['SO']
-        self.tags = {'production', 'mch'}
+        self.maintainers = ['SO', 'CB']
+        self.tags = {'production', 'mch', 'external-resources'}
 
 
 # Check that the netCDF loaded by the NCO module supports the nc4 filetype

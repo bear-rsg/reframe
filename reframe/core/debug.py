@@ -28,18 +28,18 @@ def _decrease_indent():
 
 
 def repr(obj, indent=4, max_depth=2):
-    """Return a generic representation string for object `obj`.
+    '''Return a generic representation string for object `obj`.
 
     Keyword arguments:
     indent -- indentation width
     max_depth -- maximum depth for expanding nested objects
-    """
+    '''
     if not hasattr(obj, '__dict__'):
         # Delegate to the builtin repr() for builtin types
         return builtins.repr(obj)
 
     tid = _gettid()
-    indent_width = _increase_indent() * indent
+    _increase_indent()
 
     # Attribute representation
     if _depth[tid] == max_depth:

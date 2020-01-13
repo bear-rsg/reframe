@@ -4,18 +4,14 @@
 
 
 class ReframeSettings:
-    reframe_module = None
     job_poll_intervals = [1, 2, 3]
     job_submit_timeout = 60
     checks_path = ['checks/']
     checks_path_recurse = True
     site_configuration = {
         'systems': {
-            # Generic system used also in unit tests
             'generic': {
                 'descr': 'Generic example system',
-
-                # Adjust to your system's hostname
                 'hostnames': ['localhost'],
                 'partitions': {
                     'login': {

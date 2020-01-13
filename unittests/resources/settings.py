@@ -4,7 +4,6 @@
 
 
 class ReframeSettings:
-    reframe_module = None
     job_poll_intervals = [1, 2, 3]
     job_submit_timeout = 60
     checks_path = ['checks/']
@@ -34,18 +33,19 @@ class ReframeSettings:
                 'prefix': '.rfm_testing',
                 'resourcesdir': '.rfm_testing/resources',
                 'perflogdir': '.rfm_testing/perflogs',
+                'modules': ['foo/1.0'],
+                'variables': {'FOO_CMD': 'foobar'},
                 'partitions': {
                     'login': {
                         'scheduler': 'local',
-                        'modules': [],
-                        'access': [],
                         'resources': {},
                         'environs': ['PrgEnv-cray', 'PrgEnv-gnu', 'builtin-gcc'],
                         'descr': 'Login nodes'
                     },
                     'gpu': {
                         'scheduler': 'nativeslurm',
-                        'modules': [],
+                        'modules': ['foogpu'],
+                        'variables': {'FOO_GPU': 'yes'},
                         'resources': {
                             'gpu': ['--gres=gpu:{num_gpus_per_node}'],
                             'datawarp': [

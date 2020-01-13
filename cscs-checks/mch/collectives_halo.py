@@ -2,10 +2,9 @@ import reframe as rfm
 import reframe.utility.sanity as sn
 
 
-class CommunicationTestBase(rfm.RegressionTest):
+class CollectivesBaseTest(rfm.RegressionTest):
     def __init__(self, variant, bench_reference):
-        super().__init__()
-        self.valid_systems = ['dom:gpu', 'daint:gpu', 'kesch:cn']
+        self.valid_systems = ['dom:gpu', 'daint:gpu', 'kesch:cn', 'tiger:gpu']
         self.valid_prog_environs = ['PrgEnv-gnu']
         self.variables = {'G2G': '1'}
         self.executable = 'build/src/comm_overlap_benchmark'
@@ -23,23 +22,32 @@ class CommunicationTestBase(rfm.RegressionTest):
             self.num_gpus_per_node = 16
             self.num_tasks_per_node = 16
             self.num_tasks_per_socket = 8
-            self.modules = ['craype-accel-nvidia35', 'cmake']
+            self.modules = ['cmake']
             self.variables['MV2_USE_CUDA'] = '1'
             self.build_system.config_opts += [
                 '-DMPI_VENDOR=mvapich2',
                 '-DCUDA_COMPUTE_CAPABILITY="sm_37"'
             ]
             self.build_system.max_concurrency = 1
-        else:
+        elif self.current_system.name in {'daint', 'dom', 'tiger'}:
             self.num_tasks = 4
             self.num_gpus_per_node = 1
             self.num_tasks_per_node = 1
-            self.modules = ['craype-accel-nvidia60', 'CMake']
+            if self.current_system.name in {'tiger'}:
+                self.modules = ['craype-accel-nvidia60']
+            else:
+                self.modules = ['craype-accel-nvidia60', 'CMake']
+
             self.variables['MPICH_RDMA_ENABLED_CUDA'] = '1'
             self.build_system.config_opts += [
                 '-DCUDA_COMPUTE_CAPABILITY="sm_60"'
             ]
             self.build_system.max_concurrency = 8
+        else:
+            self.num_tasks = 4
+            self.num_gpus_per_node = 1
+            self.num_tasks_per_node = 1
+            self.build_system.max_concurrency = 1
 
         self.sanity_patterns = sn.assert_found(r'ELAPSED TIME:', self.stdout)
         self.perf_patterns = {
@@ -58,12 +66,17 @@ class CommunicationTestBase(rfm.RegressionTest):
                 'default': 0.0138493
             }
         }
+
         if self.current_system.name == 'dom':
             sysname = 'daint'
         else:
             sysname = self.current_system.name
 
-        ref = bench_reference[sysname][variant]
+        try:
+            ref = bench_reference[sysname][variant]
+        except KeyError:
+            ref = 0.0
+
         self.reference = {
             'kesch:cn': {
                 'elapsed_time': (ref, None, 0.15)
@@ -73,11 +86,14 @@ class CommunicationTestBase(rfm.RegressionTest):
             },
             'dom': {
                 'elapsed_time': (ref, None, 0.15)
+            },
+            '*': {
+                'elapsed_time': (ref, None, None)
             }
         }
 
-        self.maintainers = ['AJ', 'VK']
-        self.tags = {'production', 'mch'}
+        self.maintainers = ['AJ', 'MKr']
+        self.tags = {'production', 'mch', 'craype'}
 
     def setup(self, *args, **kwargs):
         super().setup(*args, **kwargs)
@@ -86,18 +102,15 @@ class CommunicationTestBase(rfm.RegressionTest):
                                          '--cpu_bind=q']
 
 
-# the values default, nocomm and nocomp refer to the different parts
-# of the check where the time is measured; default == all
-# nocomm == no communication  nocomp == no computation
 @rfm.parameterized_test(['default'], ['nocomm'], ['nocomp'])
-class AlltoallvTest(CommunicationTestBase):
+class AlltoallvTest(CollectivesBaseTest):
     def __init__(self, variant):
         super().__init__(variant,
                          {
                              'kesch': {
-                                 'nocomm':  5.7878,
-                                 'nocomp':  5.62155,
-                                 'default': 5.53777
+                                 'nocomm':  6.89819,
+                                 'nocomp':  6.98276,
+                                 'default': 6.85289
                              },
                              'daint': {
                                  'nocomm':  0.0171947,
@@ -105,21 +118,20 @@ class AlltoallvTest(CommunicationTestBase):
                                  'default': 0.0138493
                              }
                          })
-        self.descr = 'Alltoall communication test'
         self.strict_check = False
-        self.sourcesdir = 'https://github.com/cosunae/comm_overlap_bench'
+        self.sourcesdir = 'https://github.com/eth-cscs/comm_overlap_bench.git'
         self.prebuild_cmd = ['git checkout alltoallv']
 
 
 @rfm.parameterized_test(['default'], ['nocomm'], ['nocomp'])
-class HaloExchangeTest(CommunicationTestBase):
+class HaloExchangeTest(CollectivesBaseTest):
     def __init__(self, variant):
         super().__init__(variant,
                          {
                              'kesch': {
                                  'nocomm':  5.7878,
-                                 'nocomp':  5.62155,
-                                 'default': 5.53777
+                                 'nocomp':  54.2012,
+                                 'default': 55.142
                              },
                              'daint': {
                                  'nocomm':  0.978306,
@@ -127,6 +139,5 @@ class HaloExchangeTest(CommunicationTestBase):
                                  'default': 2.53509
                              }
                          })
-        self.descr = 'Halo-cell exchange test'
-        self.sourcesdir = 'https://github.com/MeteoSwiss-APN/comm_overlap_bench.git'
+        self.sourcesdir = 'https://github.com/eth-cscs/comm_overlap_bench.git'
         self.prebuild_cmd = ['git checkout barebones']

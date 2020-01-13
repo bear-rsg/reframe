@@ -1,4 +1,6 @@
 import os
+import pytest
+import random
 import shutil
 import sys
 import tempfile
@@ -172,6 +174,13 @@ class TestOSTools(unittest.TestCase):
         self.assertTrue(os_ext.is_url(repo_https))
         self.assertFalse(os_ext.is_url(repo_ssh))
 
+    def test_git_repo_hash(self):
+        # A git branch hash consists of 8(short) or 40 characters.
+        assert len(os_ext.git_repo_hash()) == 8
+        assert len(os_ext.git_repo_hash(short=False)) == 40
+        assert os_ext.git_repo_hash(branch='invalid') is None
+        assert os_ext.git_repo_hash(branch='') is None
+
     def test_git_repo_exists(self):
         self.assertTrue(os_ext.git_repo_exists(
             'https://github.com/eth-cscs/reframe.git', timeout=3))
@@ -261,7 +270,7 @@ class TestCopyTree(unittest.TestCase):
         open(os.path.join(self.prefix, 'foo.txt'), 'w').close()
 
     def verify_target_directory(self, file_links=[]):
-        """Verify the directory structure"""
+        '''Verify the directory structure'''
         self.assertTrue(
             os.path.exists(os.path.join(self.target, 'bar', 'bar.txt')))
         self.assertTrue(
@@ -765,10 +774,12 @@ class TestReadOnlyViews(unittest.TestCase):
         self.assertEqual(1, l[0])
         self.assertEqual(3, len(l))
         self.assertIn(2, l)
-        self.assertEqual(list(l), [1, 2, 2])
+        self.assertEqual(l, [1, 2, 2])
+        self.assertEqual(l, util.SequenceView([1, 2, 2]))
         self.assertEqual(list(reversed(l)), [2, 2, 1])
         self.assertEqual(1, l.index(2))
         self.assertEqual(2, l.count(2))
+        self.assertEqual(str(l), str([1, 2, 2]))
 
         # Assert immutability
         m = l + [3, 4]
@@ -830,6 +841,8 @@ class TestReadOnlyViews(unittest.TestCase):
         self.assertEqual(2, d.get('b'))
         self.assertEqual(3, d.get('c', 3))
         self.assertEqual({'a': 1, 'b': 2}, d)
+        self.assertEqual(d, util.MappingView({'b': 2, 'a': 1}))
+        self.assertEqual(str(d), str({'a': 1, 'b': 2}))
         self.assertNotEqual({'a': 1, 'b': 2, 'c': 3}, d)
 
         # Assert immutability
@@ -853,3 +866,141 @@ class TestReadOnlyViews(unittest.TestCase):
 
         with self.assertRaises(AttributeError):
             d.setdefault('c', 3)
+
+
+class TestOrderedSet(unittest.TestCase):
+    def setUp(self):
+        # Initialize all tests with the same seed
+        random.seed(1)
+
+    def test_construction(self):
+        l = list(range(10))
+        random.shuffle(l)
+
+        s = util.OrderedSet(l + l)
+        assert len(s) == 10
+        for i in range(10):
+            assert i in s
+
+        assert list(s) == l
+
+    def test_construction_empty(self):
+        s = util.OrderedSet()
+        assert s == set()
+        assert set() == s
+
+    def test_str(self):
+        l = list(range(10))
+        random.shuffle(l)
+
+        s = util.OrderedSet(l)
+        assert str(s) == str(l).replace('[', '{').replace(']', '}')
+
+        s = util.OrderedSet()
+        assert str(s) == type(s).__name__ + '()'
+
+    def test_construction_error(self):
+        with pytest.raises(TypeError):
+            s = util.OrderedSet(2)
+
+        with pytest.raises(TypeError):
+            s = util.OrderedSet(1, 2, 3)
+
+    def test_operators(self):
+        s0 = util.OrderedSet(range(10))
+        s1 = util.OrderedSet(range(20))
+        s2 = util.OrderedSet(range(10, 20))
+
+        assert s0 == set(range(10))
+        assert set(range(10)) == s0
+        assert s0 != s1
+        assert s1 != s0
+
+        assert s0 < s1
+        assert s0 <= s1
+        assert s0 <= s0
+        assert s1 > s0
+        assert s1 >= s0
+        assert s1 >= s1
+
+        assert s0.issubset(s1)
+        assert s1.issuperset(s0)
+
+        assert (s0 & s1) == s0
+        assert (s0 & s2) == set()
+        assert (s0 | s2) == s1
+
+        assert (s1 - s0) == s2
+        assert (s2 - s0) == s2
+
+        assert (s0 ^ s1) == s2
+
+        assert s0.isdisjoint(s2)
+        assert not s0.isdisjoint(s1)
+        assert s0.symmetric_difference(s1) == s2
+
+    def test_union(self):
+        l0 = list(range(10))
+        l1 = list(range(10, 20))
+        l2 = list(range(20, 30))
+        random.shuffle(l0)
+        random.shuffle(l1)
+        random.shuffle(l2)
+
+        s0 = util.OrderedSet(l0)
+        s1 = util.OrderedSet(l1)
+        s2 = util.OrderedSet(l2)
+
+        assert list(s0.union(s1, s2)) == l0 + l1 + l2
+
+    def test_intersection(self):
+        l0 = list(range(10, 40))
+        l1 = list(range(20, 40))
+        l2 = list(range(20, 30))
+        random.shuffle(l0)
+        random.shuffle(l1)
+        random.shuffle(l2)
+
+        s0 = util.OrderedSet(l0)
+        s1 = util.OrderedSet(l1)
+        s2 = util.OrderedSet(l2)
+
+        assert s0.intersection(s1, s2) == s2
+
+    def test_difference(self):
+        l0 = list(range(10, 40))
+        l1 = list(range(20, 40))
+        l2 = list(range(20, 30))
+        random.shuffle(l0)
+        random.shuffle(l1)
+        random.shuffle(l2)
+
+        s0 = util.OrderedSet(l0)
+        s1 = util.OrderedSet(l1)
+        s2 = util.OrderedSet(l2)
+
+        assert s0.difference(s1, s2) == set(range(10, 20))
+
+    def test_reversed(self):
+        l = list(range(10))
+        random.shuffle(l)
+
+        s = util.OrderedSet(l)
+        assert list(reversed(s)) == list(reversed(l))
+
+    def test_concat_files(self):
+        with tempfile.TemporaryDirectory(dir='unittests') as tmpdir:
+            with os_ext.change_dir(tmpdir):
+                file1 = 'in1.txt'
+                file2 = 'in2.txt'
+                concat_file = 'out.txt'
+                with open(file1, 'w') as f1:
+                    f1.write('Hello1')
+
+                with open(file2, 'w') as f2:
+                    f2.write('Hello2')
+
+                os_ext.concat_files(concat_file, file1, file2, overwrite=True)
+                with open(concat_file) as cf:
+                    out = cf.read()
+                    assert out == 'Hello1\nHello2\n'

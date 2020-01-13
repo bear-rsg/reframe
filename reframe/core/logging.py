@@ -7,8 +7,6 @@ import os
 import pprint
 import shutil
 import sys
-import threading
-import warnings
 import socket
 from datetime import datetime
 
@@ -78,8 +76,8 @@ def _check_level(level):
 # 1. Monkey-patch the `setLevel` method of `logging.Handler` with our method
 #    that understands our levels.
 # 2. We need a way to differentiate the patched handlers. For this reason, we
-#    make the `logging.Handler` a pseudo-subclass of our custom `Handler` class,
-#    which itself should be abstract and unable to be instantiated.
+#    make the `logging.Handler` a pseudo-subclass of our custom `Handler`
+#    class, which itself should be abstract and unable to be instantiated.
 
 class Handler(abc.ABC):
     @abc.abstractmethod
@@ -98,9 +96,9 @@ logging.Handler.setLevel = set_handler_level
 
 
 class MultiFileHandler(logging.FileHandler):
-    """A file handler that allows writing on different log files based on
+    '''A file handler that allows writing on different log files based on
     information from the log record.
-    """
+    '''
 
     def __init__(self, prefix, mode='a', encoding=None):
         super().__init__(prefix, mode, encoding, delay=True)
@@ -369,12 +367,14 @@ class LoggerAdapter(logging.LoggerAdapter):
             {
                 'check_name': 'reframe',
                 'check_jobid': '-1',
+                'check_job_completion_time': None,
                 'check_info': 'reframe',
                 'check_system': None,
                 'check_partition': None,
                 'check_environ': None,
                 'check_outputdir': None,
                 'check_stagedir': None,
+                'check_num_tasks': None,
                 'check_perf_var': None,
                 'check_perf_value': None,
                 'check_perf_ref': None,
@@ -384,7 +384,7 @@ class LoggerAdapter(logging.LoggerAdapter):
                 'osuser':  os_ext.osuser()  or '<unknown>',
                 'osgroup': os_ext.osgroup() or '<unknown>',
                 'check_tags': None,
-                'version': reframe.VERSION,
+                'version': os_ext.reframe_version(),
             }
         )
         self.check = check
@@ -406,7 +406,7 @@ class LoggerAdapter(logging.LoggerAdapter):
             return []
 
     def _update_check_extras(self):
-        """Return a dictionary with all the check-specific information."""
+        '''Return a dictionary with all the check-specific information.'''
         if self.check is None:
             return
 
@@ -414,6 +414,7 @@ class LoggerAdapter(logging.LoggerAdapter):
         self.extra['check_info'] = self.check.info()
         self.extra['check_outputdir'] = self.check.outputdir
         self.extra['check_stagedir'] = self.check.stagedir
+        self.extra['check_num_tasks'] = self.check.num_tasks
         self.extra['check_tags'] = ','.join(self.check.tags)
         if self.check.current_system:
             self.extra['check_system'] = self.check.current_system.name
@@ -426,6 +427,13 @@ class LoggerAdapter(logging.LoggerAdapter):
 
         if self.check.job:
             self.extra['check_jobid'] = self.check.job.jobid
+            if self.check.job.completion_time:
+                # Use the logging handlers' date format to format
+                # completion_time
+                # NOTE: All handlers use the same date format
+                fmt = self.logger.handlers[0].formatter.datefmt
+                ct = self.check.job.completion_time.strftime(fmt)
+                self.extra['check_job_completion_time'] = ct
 
     def log_performance(self, level, tag, value, ref,
                         low_thres, upper_thres, unit=None, *, msg=None):
@@ -475,8 +483,8 @@ class LoggerAdapter(logging.LoggerAdapter):
         super().error(message, *args, **kwargs)
 
     def inc_verbosity(self, num_steps):
-        """Convenience function for increasing the verbosity
-        of the logger step-wise."""
+        '''Convenience function for increasing the verbosity
+        of the logger step-wise.'''
         log_levels = sorted(_log_level_names.keys())[1:]
         for h in self.std_stream_handlers:
             level_idx = log_levels.index(h.level)
@@ -492,34 +500,25 @@ class LoggerAdapter(logging.LoggerAdapter):
 null_logger = LoggerAdapter()
 
 _logger = None
-_init_perf_logger = None
-_init_context_logger = null_logger
-_thread_local = threading.local()
-
-
-def _getlocal():
-    global _thread_local, _init_perf_logger, _init_context_logger
-
-    if not hasattr(_thread_local, 'perf_logger') or _thread_local.perf_logger is None:
-        _thread_local.perf_logger = _init_perf_logger
-    
-    if not hasattr(_thread_local, 'context_logger') or _thread_local.context_logger is null_logger:
-        _thread_local.context_logger = _init_context_logger
-
-    return _thread_local
+_perf_logger = None
+_context_logger = null_logger
 
 
 class logging_context:
     def __init__(self, check=None, level=DEBUG):
+        global _context_logger
+
         self._level = level
-        self._orig_logger = _getlocal().context_logger
+        self._orig_logger = _context_logger
         if check is not None:
-            _getlocal()._context_logger = LoggerAdapter(_logger, check)
+            _context_logger = LoggerAdapter(_logger, check)
 
     def __enter__(self):
-        return _getlocal().context_logger
+        return _context_logger
 
     def __exit__(self, exc_type, exc_value, traceback):
+        global _context_logger
+
         # Log any exceptions thrown with the current context logger
         if exc_type is not None:
             msg = 'caught {0}: {1}'
@@ -527,11 +526,11 @@ class logging_context:
             getlogger().log(self._level, msg.format(exc_fullname, exc_value))
 
         # Restore context logger
-        _getlocal().context_logger = self._orig_logger
+        _context_logger = self._orig_logger
 
 
 def configure_logging(loggin_config):
-    global _logger, _init_context_logger
+    global _logger, _context_logger
 
     if loggin_config is None:
         _logger = None
@@ -539,15 +538,13 @@ def configure_logging(loggin_config):
         return
 
     _logger = load_from_dict(loggin_config)
-    _init_context_logger = LoggerAdapter(_logger)
-    _getlocal().context_logger = _init_context_logger
+    _context_logger = LoggerAdapter(_logger)
 
 
 def configure_perflogging(perf_logging_config):
-    global _init_perf_logger
+    global _perf_logger
 
-    _init_perf_logger = load_from_dict(perf_logging_config)
-    _getlocal().perf_logger = _init_perf_logger
+    _perf_logger = load_from_dict(perf_logging_config)
 
 
 def save_log_files(dest):
@@ -558,8 +555,8 @@ def save_log_files(dest):
 
 
 def getlogger():
-    return _getlocal().context_logger
+    return _context_logger
 
 
 def getperflogger(check):
-    return LoggerAdapter(_getlocal().perf_logger, check)
+    return LoggerAdapter(_perf_logger, check)

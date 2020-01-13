@@ -7,7 +7,7 @@ import reframe.utility.sanity as sn
 class CudaCheck(rfm.RegressionTest):
     def __init__(self):
         super().__init__()
-        self.valid_systems = ['daint:gpu', 'dom:gpu', 'kesch:cn']
+        self.valid_systems = ['daint:gpu', 'dom:gpu', 'kesch:cn', 'tiger:gpu']
         self.valid_prog_environs = ['PrgEnv-cray', 'PrgEnv-gnu']
         if self.current_system.name == 'kesch':
             self.valid_prog_environs += ['PrgEnv-cray-nompi',
@@ -16,7 +16,7 @@ class CudaCheck(rfm.RegressionTest):
         self.sourcesdir = os.path.join(self.current_system.resourcesdir,
                                        'CUDA', 'essentials')
         if self.current_system.name == 'kesch':
-            self.modules = ['craype-accel-nvidia35']
+            self.modules = ['cudatoolkit/8.0.61']
         else:
             self.modules = ['craype-accel-nvidia60']
 
@@ -26,8 +26,8 @@ class CudaCheck(rfm.RegressionTest):
             self.exclusive_access = True
             self.nvidia_sm = '37'
 
-        self.maintainers = ['AJ', 'VK']
-        self.tags = {'production'}
+        self.maintainers = ['AJ', 'SK']
+        self.tags = {'production', 'craype', 'external-resources'}
 
 
 @rfm.required_version('>=2.14')
@@ -38,8 +38,9 @@ class CudaMatrixmulCublasCheck(CudaCheck):
         self.descr = 'Implements matrix multiplication using CUBLAS'
         self.sourcepath = 'matrixmulcublas.cu'
         self.build_system = 'SingleSource'
-        self.build_system.cxxflags = ['-I.', '-ccbin g++ -m64 -lcublas',
+        self.build_system.cxxflags = ['-I.', '-ccbin g++', '-m64',
                                       '-arch=sm_%s' % self.nvidia_sm]
+        self.build_system.ldflags = ['-lcublas']
         self.sanity_patterns = sn.assert_found(
             r'Comparing CUBLAS Matrix Multiply with CPU results: PASS',
             self.stdout)
@@ -53,7 +54,7 @@ class CudaDeviceQueryCheck(CudaCheck):
         self.descr = 'Queries the properties of the CUDA devices'
         self.sourcepath = 'devicequery.cu'
         self.build_system = 'SingleSource'
-        self.build_system.cxxflags = ['-I.', '-ccbin g++ -m64 -lcublas',
+        self.build_system.cxxflags = ['-I.', '-ccbin g++', '-m64',
                                       '-arch=sm_%s' % self.nvidia_sm]
         self.sanity_patterns = sn.assert_found(r'Result = PASS', self.stdout)
 
@@ -66,8 +67,9 @@ class CudaConcurrentKernelsCheck(CudaCheck):
         self.descr = 'Use of streams for concurrent execution'
         self.sourcepath = 'concurrentkernels.cu'
         self.build_system = 'SingleSource'
-        self.build_system.cxxflags = ['-I.', '-ccbin g++ -m64 -lcublas',
+        self.build_system.cxxflags = ['-I.', '-ccbin g++', '-m64',
                                       '-arch=sm_%s' % self.nvidia_sm]
+        self.build_system.ldflags = ['-lcublas']
         self.sanity_patterns = sn.assert_found(r'Test passed', self.stdout)
 
 
@@ -91,5 +93,6 @@ class CudaSimpleMPICheck(CudaCheck):
             self.variables = {'CRAY_CUDA_MPS': '1'}
 
         self.build_system = 'Make'
-        self.build_system.cxxflags = ['-I.', '-ccbin g++ -m64 -lcublas',
+        self.build_system.cxxflags = ['-I.', '-ccbin g++', '-m64',
                                       '-arch=sm_%s' % self.nvidia_sm]
+        self.build_system.ldflags = ['-lcublas']

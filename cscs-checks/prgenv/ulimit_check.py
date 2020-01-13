@@ -8,7 +8,7 @@ class UlimitCheck(rfm.RegressionTest):
         super().__init__()
         self.descr = 'Checking the output of ulimit -s in node.'
         self.valid_systems = ['daint:gpu', 'daint:mc',
-                              'dom:gpu',   'dom:mc']
+                              'dom:gpu',   'dom:mc', 'tiger:gpu']
         self.valid_prog_environs = ['PrgEnv-cray',  'PrgEnv-gnu',
                                     'PrgEnv-intel', 'PrgEnv-pgi']
         self.sourcepath = 'ulimit.c'
@@ -17,5 +17,5 @@ class UlimitCheck(rfm.RegressionTest):
             sn.assert_found(r'The hard limit is unlimited', self.stdout),
         ])
 
-        self.maintainers = ['RS', 'VK']
-        self.tags = {'production', 'scs'}
+        self.maintainers = ['RS', 'CB']
+        self.tags = {'production', 'scs', 'craype'}

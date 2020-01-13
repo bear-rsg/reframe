@@ -1,5 +1,4 @@
 import inspect
-import json
 import os
 import re
 import socket
@@ -8,11 +7,12 @@ import traceback
 
 import reframe
 import reframe.core.config as config
+import reframe.core.environments as env
 import reframe.core.logging as logging
 import reframe.core.runtime as runtime
 import reframe.frontend.argparse as argparse
 import reframe.frontend.check_filters as filters
-import reframe.utility as util
+import reframe.frontend.dependency as dependency
 import reframe.utility.os_ext as os_ext
 from reframe.core.exceptions import (EnvironError, ConfigError, ReframeError,
                                      ReframeFatalError, format_exception,
@@ -55,8 +55,7 @@ def list_checks(checks, printer, detailed=False):
 def main():
     # Setup command line options
     argparser = argparse.ArgumentParser()
-    output_options = argparser.add_argument_group(
-        'Options controlling regression directories')
+    output_options = argparser.add_argument_group('Options controlling output')
     locate_options = argparser.add_argument_group(
         'Options for locating checks')
     select_options = argparser.add_argument_group(
@@ -65,18 +64,20 @@ def main():
         'Options controlling actions')
     run_options = argparser.add_argument_group(
         'Options controlling execution of checks')
+    env_options = argparser.add_argument_group(
+        'Options controlling environment')
     misc_options = argparser.add_argument_group('Miscellaneous options')
 
     # Output directory options
     output_options.add_argument(
         '--prefix', action='store', metavar='DIR',
-        help='Set regression prefix directory to DIR')
+        help='Set output directory prefix to DIR')
     output_options.add_argument(
         '-o', '--output', action='store', metavar='DIR',
-        help='Set regression output directory to DIR')
+        help='Set output directory to DIR')
     output_options.add_argument(
         '-s', '--stage', action='store', metavar='DIR',
-        help='Set regression stage directory to DIR')
+        help='Set stage directory to DIR')
     output_options.add_argument(
         '--perflogdir', action='store', metavar='DIR',
         help='Set directory prefix for the performance logs '
@@ -105,9 +106,6 @@ def main():
     select_options.add_argument(
         '-t', '--tag', action='append', dest='tags', default=[],
         help='Select checks matching TAG')
-    select_options.add_argument(
-        '-e', '--exclude-tag', action='append', dest='exclude_tags', default=[],
-        help='Exclude checks with any TAG')
     select_options.add_argument(
         '-n', '--name', action='append', dest='names', default=[],
         metavar='NAME', help='Select checks with NAME')
@@ -186,8 +184,32 @@ def main():
              'may be retried (default: 0)')
     run_options.add_argument(
         '--flex-alloc-tasks', action='store',
-        dest='flex_alloc_tasks', metavar='{all|idle|NUM}', default='idle',
-        help="Strategy for flexible task allocation (default: 'idle').")
+        dest='flex_alloc_tasks', metavar='{all|idle|NUM}', default=None,
+        help='*deprecated*, please use --flex-alloc-nodes instead')
+    run_options.add_argument(
+        '--flex-alloc-nodes', action='store',
+        dest='flex_alloc_nodes', metavar='{all|idle|NUM}', default=None,
+        help="Strategy for flexible node allocation (default: 'idle').")
+
+    env_options.add_argument(
+        '-M', '--map-module', action='append', metavar='MAPPING',
+        dest='module_mappings', default=[],
+        help='Apply a single module mapping')
+    env_options.add_argument(
+        '-m', '--module', action='append', default=[],
+        metavar='MOD', dest='user_modules',
+        help='Load module MOD before running the regression suite')
+    env_options.add_argument(
+        '--module-mappings', action='store', metavar='FILE',
+        dest='module_map_file',
+        help='Apply module mappings defined in FILE')
+    env_options.add_argument(
+        '-u', '--unload-module', action='append', metavar='MOD',
+        dest='unload_modules', default=[],
+        help='Unload module MOD before running the regression suite')
+    env_options.add_argument(
+        '--purge-env', action='store_true', dest='purge_env', default=False,
+        help='Purge environment before running the regression suite')
 
     # Miscellaneous options
     misc_options.add_argument(
@@ -198,25 +220,16 @@ def main():
              '(default: %s' % os.path.join(reframe.INSTALL_PREFIX,
                                            'reframe/settings.py'))
     misc_options.add_argument(
-        '-M', '--map-module', action='append', metavar='MAPPING',
-        dest='module_mappings', default=[],
-        help='Apply a single module mapping')
-    misc_options.add_argument(
-        '-m', '--module', action='append', default=[],
-        metavar='MOD', dest='user_modules',
-        help='Load module MOD before running the regression')
-    misc_options.add_argument(
-        '--module-mappings', action='store', metavar='FILE',
-        dest='module_map_file',
-        help='Apply module mappings defined in FILE')
-    misc_options.add_argument(
         '--nocolor', action='store_false', dest='colorize', default=True,
         help='Disable coloring of output')
     misc_options.add_argument('--performance-report', action='store_true',
                               help='Print the performance report')
+
+    # FIXME: This should move to env_options as soon as
+    # https://github.com/eth-cscs/reframe/pull/946 is merged
     misc_options.add_argument(
-        '--purge-env', action='store_true', dest='purge_env', default=False,
-        help='Purge modules environment before running any tests')
+        '--non-default-craype', action='store_true', default=False,
+        help='Test a non-default Cray PE')
     misc_options.add_argument(
         '--show-config', action='store_true',
         help='Print configuration of the current system and exit')
@@ -233,7 +246,7 @@ def main():
              '(default format "%%FT%%T")'
     )
     misc_options.add_argument('-V', '--version', action='version',
-                              version=reframe.VERSION)
+                              version=os_ext.reframe_version())
     misc_options.add_argument('-v', '--verbose', action='count', default=0,
                               help='Increase verbosity level of output')
 
@@ -269,11 +282,40 @@ def main():
         printer.inc_verbosity(options.verbose)
 
     try:
-        runtime.init_runtime(settings.site_configuration, options.system)
+        runtime.init_runtime(settings.site_configuration, options.system,
+                             non_default_craype=options.non_default_craype)
     except SystemAutodetectionError:
-        printer.error("could not auto-detect system; please use the "
-                      "`--system' option to specify one explicitly")
-        sys.exit(1)
+        printer.warning(
+            'could not find a configuration entry for the current system; '
+            'falling back to a generic system configuration; '
+            'please check the online documentation on how to configure '
+            'ReFrame for your system.'
+        )
+        settings.site_configuration['systems'] = {
+            'generic': {
+                'descr': 'Generic fallback system configuration',
+                'hostnames': ['localhost'],
+                'partitions': {
+                    'login': {
+                        'scheduler': 'local',
+                        'environs': ['builtin-gcc'],
+                        'descr': 'Login nodes'
+                    }
+                }
+            }
+        }
+        settings.site_configuration['environments'] = {
+            '*': {
+                'builtin-gcc': {
+                    'type': 'ProgEnvironment',
+                    'cc':  'gcc',
+                    'cxx': 'g++',
+                    'ftn': 'gfortran',
+                }
+            }
+        }
+        runtime.init_runtime(settings.site_configuration, 'generic',
+                             non_default_craype=options.non_default_craype)
     except Exception as e:
         printer.error('configuration error: %s' % e)
         printer.verbose(''.join(traceback.format_exception(*sys.exc_info())))
@@ -344,15 +386,15 @@ def main():
     if options.show_config_env:
         envname = options.show_config_env
         for p in rt.system.partitions:
-            env = p.environment(envname)
-            if env:
+            environ = p.environment(envname)
+            if environ:
                 break
 
-        if env is None:
+        if environ is None:
             printer.error('no such environment: ' + envname)
             sys.exit(1)
 
-        printer.info(env.details())
+        printer.info(environ.details())
         sys.exit(0)
 
     if hasattr(settings, 'perf_logging_config'):
@@ -414,9 +456,6 @@ def main():
             raise ReframeError from e
 
         # Filter checks by name
-        def matches_any_pattern(name, patterns):
-            return any((fnmatch(name, p) for p in patterns))
-
         checks_matched = checks_found
         if options.exclude_names:
             for name in options.exclude_names:
@@ -459,31 +498,56 @@ def main():
                             for p in rt.system.partitions
                             for e in p.environs if re.match(env_patt, e.name)}
 
-        # Generate the test cases
+        # Generate the test cases, validate dependencies and sort them
         checks_matched = list(checks_matched)
         testcases = generate_testcases(checks_matched,
                                        options.skip_system_check,
                                        options.skip_prgenv_check,
                                        allowed_environs)
-
-        # Act on checks
+        testgraph = dependency.build_deps(testcases)
+        dependency.validate_deps(testgraph)
+        testcases = dependency.toposort(testgraph)
 
         # Unload regression's module and load user-specified modules
-        if settings.reframe_module:
-            rt.modules_system.unload_module(settings.reframe_module)
+        if hasattr(settings, 'reframe_module'):
+            printer.warning(
+                "the 'reframe_module' configuration option will be ignored; "
+                "please use the '-u' or '--unload-module' options"
+            )
 
         if options.purge_env:
             rt.modules_system.unload_all()
+        else:
+            for m in options.unload_modules:
+                rt.modules_system.unload_module(m)
+
+        # Load the environment for the current system
+        try:
+            env.load(rt.system.preload_environ)
+        except EnvironError as e:
+            printer.error("failed to load current system's environment; "
+                          "please check your configuration")
+            printer.debug(str(e))
+            raise
 
         for m in options.user_modules:
             try:
                 rt.modules_system.load_module(m, force=True)
-                raise EnvironError("test")
             except EnvironError as e:
                 printer.warning("could not load module '%s' correctly: "
                                 "Skipping..." % m)
                 printer.debug(str(e))
 
+        if options.flex_alloc_tasks:
+            printer.warning("`--flex-alloc-tasks' is deprecated and "
+                            "will be removed in the future; "
+                            "you should use --flex-alloc-nodes instead")
+            options.flex_alloc_nodes = (options.flex_alloc_nodes or
+                                        options.flex_alloc_tasks)
+
+        options.flex_alloc_nodes = options.flex_alloc_nodes or 'idle'
+
+        # Act on checks
         success = True
         if options.list:
             # List matched checks
@@ -510,20 +574,21 @@ def main():
             exec_policy.skip_sanity_check = options.skip_sanity_check
             exec_policy.skip_performance_check = options.skip_performance_check
             exec_policy.keep_stage_files = options.keep_stage_files
+
             try:
-                errmsg = "invalid option for --flex-alloc-tasks: '{0}'"
-                sched_flex_alloc_tasks = int(options.flex_alloc_tasks)
-                if sched_flex_alloc_tasks <= 0:
-                    raise ConfigError(errmsg.format(options.flex_alloc_tasks))
+                errmsg = "invalid option for --flex-alloc-nodes: '{0}'"
+                sched_flex_alloc_nodes = int(options.flex_alloc_nodes)
+                if sched_flex_alloc_nodes <= 0:
+                    raise ConfigError(errmsg.format(options.flex_alloc_nodes))
             except ValueError:
-                if not options.flex_alloc_tasks.lower() in {'idle', 'all'}:
+                if not options.flex_alloc_nodes.casefold() in {'idle', 'all'}:
                     raise ConfigError(
-                        errmsg.format(options.flex_alloc_tasks)) from None
+                        errmsg.format(options.flex_alloc_nodes)) from None
 
-                sched_flex_alloc_tasks = options.flex_alloc_tasks
+                sched_flex_alloc_nodes = options.flex_alloc_nodes
 
-            exec_policy.sched_flex_alloc_tasks = sched_flex_alloc_tasks
-            exec_policy.flex_alloc_tasks = options.flex_alloc_tasks
+            exec_policy.sched_flex_alloc_nodes = sched_flex_alloc_nodes
+            exec_policy.flex_alloc_nodes = options.flex_alloc_nodes
             exec_policy.sched_account = options.account
             exec_policy.sched_partition = options.partition
             exec_policy.sched_reservation = options.reservation
@@ -552,9 +617,10 @@ def main():
                     printer.info(runner.stats.performance_report())
 
         else:
-            printer.info('No action specified. Exiting...')
-            printer.info("Try `%s -h' for a list of available actions." %
-                         argparser.prog)
+            printer.error("No action specified. Please specify `-l'/`-L' for "
+                          "listing or `-r' for running. "
+                          "Try `%s -h' for more options." %
+                          argparser.prog)
             sys.exit(1)
 
         if not success:

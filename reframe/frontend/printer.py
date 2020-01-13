@@ -1,19 +1,18 @@
 import datetime
-import sys
 
 import reframe.core.logging as logging
 import reframe.utility.color as color
 
 
 class PrettyPrinter:
-    """Pretty printing facility for the framework.
+    '''Pretty printing facility for the framework.
 
     It takes care of formatting the progress output and adds some more
     cosmetics to specific levels of messages, such as warnings and errors.
 
     The actual printing is delegated to an internal logger, which is
     responsible for printing.
-    """
+    '''
 
     def __init__(self):
         self.colorize = True
@@ -40,7 +39,7 @@ class PrettyPrinter:
 
         if self.colorize:
             status_stripped = status.strip().lower()
-            if status_stripped in ['skip', 'skipped', 'cancel', 'canceled', 'cancelled']:
+            if status_stripped == 'skip':
                 status = color.colorize(status, color.YELLOW)
             elif status_stripped in ['fail', 'failed']:
                 status = color.colorize(status, color.RED)
@@ -49,10 +48,8 @@ class PrettyPrinter:
 
         logging.getlogger().log(level, '[ %s ] %s' % (status, message))
 
-    def result(self, check, partition, environ, success, cancelled=False):
-        if cancelled:
-            result_str = 'CANCEL'
-        elif success:
+    def result(self, check, partition, environ, success):
+        if success:
             result_str = 'OK'
         else:
             result_str = 'FAIL'

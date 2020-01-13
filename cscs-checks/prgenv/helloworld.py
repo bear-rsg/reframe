@@ -18,10 +18,10 @@ class HelloWorldBaseTest(rfm.RegressionTest):
         self.sourcepath = 'hello_world'
         self.build_system = 'SingleSource'
         self.valid_systems = ['daint:gpu', 'daint:mc', 'dom:gpu', 'dom:mc',
-                              'kesch:cn', 'leone:normal']
+                              'kesch:cn', 'leone:normal', 'tiger:gpu']
 
-        self.valid_prog_environs = ['PrgEnv-cray', 'PrgEnv-gnu',
-                                    'PrgEnv-intel', 'PrgEnv-pgi']
+        self.valid_prog_environs = ['PrgEnv-cray', 'PrgEnv-cray_classic',
+                                    'PrgEnv-gnu', 'PrgEnv-intel', 'PrgEnv-pgi']
 
         if self.current_system.name == 'kesch':
             self.exclusive_access = True
@@ -33,8 +33,8 @@ class HelloWorldBaseTest(rfm.RegressionTest):
 
         self.compilation_time_seconds = None
 
-        self.maintainers = ['CB', 'VK']
-        self.tags = {'production'}
+        self.maintainers = ['VH', 'EK']
+        self.tags = {'production', 'craype'}
 
     def setup(self, partition, environ, **job_opts):
         result = sn.findall(r'Hello World from thread \s*(\d+) out '
@@ -106,6 +106,7 @@ class HelloWorldTestSerial(HelloWorldBaseTest):
         self.descr += ' Serial ' + linkage.capitalize()
         self.prgenv_flags = {
             'PrgEnv-cray': [],
+            'PrgEnv-cray_classic': [],
             'PrgEnv-gnu': [],
             'PrgEnv-intel': [],
             'PrgEnv-pgi': []
@@ -130,11 +131,15 @@ class HelloWorldTestOpenMP(HelloWorldBaseTest):
         self.sourcepath += '_openmp.' + lang
         self.descr += ' OpenMP ' + str.capitalize(linkage)
         self.prgenv_flags = {
-            'PrgEnv-cray': ['-homp'],
+            'PrgEnv-cray': ['-homp' if lang == 'F90' else '-fopenmp'],
+            'PrgEnv-cray_classic': ['-homp'],
             'PrgEnv-gnu': ['-fopenmp'],
             'PrgEnv-intel': ['-qopenmp'],
             'PrgEnv-pgi': ['-mp']
         }
+        if self.current_system.name == 'kesch':
+            self.prgenv_flags['PrgEnv-cray'] = ['-homp']
+
         self.num_tasks = 1
         self.num_tasks_per_node = 1
         self.num_cpus_per_task = 4
@@ -161,6 +166,7 @@ class HelloWorldTestMPI(HelloWorldBaseTest):
         self.descr += ' MPI ' + linkage.capitalize()
         self.prgenv_flags = {
             'PrgEnv-cray': [],
+            'PrgEnv-cray_classic': [],
             'PrgEnv-gnu': [],
             'PrgEnv-intel': [],
             'PrgEnv-pgi': []
@@ -184,11 +190,15 @@ class HelloWorldTestMPIOpenMP(HelloWorldBaseTest):
         self.sourcepath += '_mpi_openmp.' + lang
         self.descr += ' MPI + OpenMP ' + linkage.capitalize()
         self.prgenv_flags = {
-            'PrgEnv-cray': ['-homp'],
+            'PrgEnv-cray': ['-homp' if lang == 'F90' else '-fopenmp'],
+            'PrgEnv-cray_classic': ['-homp'],
             'PrgEnv-gnu': ['-fopenmp'],
             'PrgEnv-intel': ['-qopenmp'],
             'PrgEnv-pgi': ['-mp']
         }
+        if self.current_system.name == 'kesch':
+            self.prgenv_flags['PrgEnv-cray'] = ['-homp']
+
         self.num_tasks = 6
         self.num_tasks_per_node = 3
         self.num_cpus_per_task = 4

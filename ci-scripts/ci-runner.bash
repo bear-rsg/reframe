@@ -50,7 +50,7 @@ run_tutorial_checks()
 run_user_checks()
 {
     cmd="./bin/reframe -C config/cscs.py --exec-policy=async --save-log-files \
--r -t production $@"
+-r --flex-alloc-nodes=2 -t production|benchmark $@"
     echo "Running user checks with \`$cmd'"
     checked_exec $cmd
 }
@@ -180,7 +180,7 @@ else
     echo "Running unit tests"
     echo "=================="
 
-    checked_exec ./test_reframe.py --rfm-user-config=config/cscs.py
+    checked_exec ./test_reframe.py --rfm-user-config=config/cscs-ci.py
 
     echo "==================================="
     echo "Running unit tests with PBS backend"
@@ -196,11 +196,6 @@ else
     # Find modified or added user checks
     userchecks=( $(git diff origin/master...HEAD --name-only --oneline --no-merges | \
                    grep -e '^cscs-checks/.*\.py') )
-    if [[ $(hostname) =~ daint ]]; then
-        # FIXME: temporarily disable running modified checks on Daint
-        userchecks=()
-    fi
-
     if [ ${#userchecks[@]} -ne 0 ]; then
         userchecks_path=""
         for check in ${userchecks[@]}; do

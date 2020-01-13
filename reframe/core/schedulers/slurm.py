@@ -1,10 +1,13 @@
 import functools
+import glob
 import itertools
 import re
 import time
 from argparse import ArgumentParser
+from contextlib import suppress
 from datetime import datetime
 
+import reframe.core.environments as env
 import reframe.core.schedulers as sched
 import reframe.utility.os_ext as os_ext
 from reframe.core.config import settings
@@ -14,33 +17,52 @@ from reframe.core.logging import getlogger
 from reframe.core.schedulers.registry import register_scheduler
 
 
-class SlurmJobState(sched.JobState):
-    @property
-    def is_cancel(self):
-        return self == SLURM_JOB_CANCELLED
+def slurm_state_completed(state):
+    completion_states = {
+        'BOOT_FAIL',
+        'CANCELLED',
+        'COMPLETED',
+        'DEADLINE',
+        'FAILED',
+        'NODE_FAIL',
+        'OUT_OF_MEMORY',
+        'PREEMPTED',
+        'TIMEOUT',
+    }
+    if state:
+        return all(s in completion_states for s in state.split(','))
+
+    return False
 
 
-# Slurm Job states
-SLURM_JOB_BOOT_FAIL   = SlurmJobState('BOOT_FAIL')
-SLURM_JOB_CANCELLED   = SlurmJobState('CANCELLED')
-SLURM_JOB_COMPLETED   = SlurmJobState('COMPLETED')
-SLURM_JOB_CONFIGURING = SlurmJobState('CONFIGURING')
-SLURM_JOB_COMPLETING  = SlurmJobState('COMPLETING')
-SLURM_JOB_FAILED      = SlurmJobState('FAILED')
-SLURM_JOB_NODE_FAILED = SlurmJobState('NODE_FAILED')
-SLURM_JOB_PENDING     = SlurmJobState('PENDING')
-SLURM_JOB_PREEMPTED   = SlurmJobState('PREEMPTED')
-SLURM_JOB_RESIZING    = SlurmJobState('RESIZING')
-SLURM_JOB_RUNNING     = SlurmJobState('RUNNING')
-SLURM_JOB_SUSPENDED   = SlurmJobState('SUSPENDED')
-SLURM_JOB_TIMEOUT     = SlurmJobState('TIMEOUT')
+def slurm_state_pending(state):
+    pending_states = {
+        'COMPLETING',
+        'CONFIGURING',
+        'PENDING',
+        'RESV_DEL_HOLD',
+        'REQUEUE_FED',
+        'REQUEUE_HOLD',
+        'REQUEUED',
+        'RESIZING',
+        'REVOKED',
+        'SIGNALING',
+        'SPECIAL_EXIT',
+        'STAGE_OUT',
+        'STOPPED',
+        'SUSPENDED',
+    }
+    if state:
+        return any(s in pending_states for s in state.split(','))
+
+    return False
 
 
 _run_strict = functools.partial(os_ext.run_command, check=True)
 
 
 @register_scheduler('slurm')
-class SlurmJob(sched.Job):
+class SlurmJobScheduler(sched.JobScheduler):
     # In some systems, scheduler performance is sensitive to the squeue poll
     # ratio. In this backend, squeue is used to obtain the reason a job is
     # blocked, so as to cancel it if it is blocked indefinitely. The following
@@ -48,18 +70,15 @@ class SlurmJob(sched.Job):
     # standard job state polling using sacct.
     SACCT_SQUEUE_RATIO = 10
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    # This matches the format for both normal jobs as well as job arrays.
+    # For job arrays the job_id has one of the following formats:
+    #   * <job_id>_<array_task_id>
+    #   * <job_id>_[<array_task_id_start>-<array_task_id_end>]
+    # See (`Job Array Support<https://slurm.schedmd.com/job_array.html`__)
+    _state_patt = r'\d+(?:_\d+|_\[\d+-\d+\])?'
+
+    def __init__(self):
         self._prefix = '#SBATCH'
-        self._completion_states = [SLURM_JOB_BOOT_FAIL,
-                                   SLURM_JOB_CANCELLED,
-                                   SLURM_JOB_COMPLETED,
-                                   SLURM_JOB_FAILED,
-                                   SLURM_JOB_NODE_FAILED,
-                                   SLURM_JOB_PREEMPTED,
-                                   SLURM_JOB_TIMEOUT]
-        self._pending_states = [SLURM_JOB_CONFIGURING,
-                                SLURM_JOB_PENDING]
 
         # Reasons to cancel a pending job: if the job is expected to remain
         # pending for a much longer time then usual (mostly if a sysadmin
@@ -75,7 +94,34 @@ class SlurmJob(sched.Job):
                                 'ReqNodeNotAvail',
                                 'QOSUsageThreshold']
         self._is_cancelling = False
+        self._is_job_array = None
         self._update_state_count = 0
+        self._completion_time = None
+
+    def completion_time(self, job):
+        if (self._completion_time or
+            not slurm_state_completed(job.state)):
+            return self._completion_time
+
+        with env.temp_environment(variables={'SLURM_TIME_FORMAT': 'standard'}):
+            completed = os_ext.run_command(
+                'sacct -S %s -P -j %s -o jobid,end' %
+                (datetime.now().strftime('%F'), job.jobid),
+                log=False
+            )
+
+        state_match = list(re.finditer(
+            r'^(?P<jobid>%s)\|(?P<end>\S+)' % self._state_patt,
+            completed.stdout, re.MULTILINE))
+        if not state_match:
+            return None
+
+        self._completion_time = max(
+            datetime.strptime(s.group('end'), '%Y-%m-%dT%H:%M:%S')
+            for s in state_match
+        )
+
+        return self._completion_time
 
     def _format_option(self, var, option):
         if var is not None:
@@ -83,58 +129,54 @@ class SlurmJob(sched.Job):
         else:
             return ''
 
-    def prepare(self, commands, environs=None, pre_environ=None, **gen_opts):
-        if self.sched_partition:
-            self.options.append('--partition=%s' % self.sched_partition)
-
-        if self.sched_account:
-            self.options.append('--account=%s' % self.sched_account)
-
-        if self.sched_nodelist:
-            self.options.append('--nodelist=%s' % self.sched_nodelist)
-
-        if self.sched_exclude_nodelist:
-            self.options.append('--exclude=%s' % self.sched_exclude_nodelist)
-
-        if self.sched_reservation:
-            self.options.append('--reservation=%s' % self.sched_reservation)
-
-        super().prepare(commands, environs, pre_environ, **gen_opts)
-
-    def emit_preamble(self):
+    def emit_preamble(self, job):
         preamble = [
-            self._format_option(self.name, '--job-name="{0}"'),
-            self._format_option(self.num_tasks, '--ntasks={0}'),
-            self._format_option(self.num_tasks_per_node,
+            self._format_option(job.name, '--job-name="{0}"'),
+            self._format_option(job.num_tasks, '--ntasks={0}'),
+            self._format_option(job.num_tasks_per_node,
                                 '--ntasks-per-node={0}'),
-            self._format_option(self.num_tasks_per_core,
+            self._format_option(job.num_tasks_per_core,
                                 '--ntasks-per-core={0}'),
-            self._format_option(self.num_tasks_per_socket,
+            self._format_option(job.num_tasks_per_socket,
                                 '--ntasks-per-socket={0}'),
-            self._format_option(self.num_cpus_per_task, '--cpus-per-task={0}'),
-            self._format_option(self.stdout, '--output={0}'),
-            self._format_option(self.stderr, '--error={0}'),
+            self._format_option(job.num_cpus_per_task, '--cpus-per-task={0}'),
+            self._format_option(job.sched_partition, '--partition={0}'),
+            self._format_option(job.sched_account, '--account={0}'),
+            self._format_option(job.sched_nodelist, '--nodelist={0}'),
+            self._format_option(job.sched_exclude_nodelist, '--exclude={0}'),
+            self._format_option(job.sched_reservation, '--reservation={0}')
         ]
 
-        if self.time_limit is not None:
-            preamble.append(self._format_option('%d:%d:%d' % self.time_limit,
-                                                '--time={0}'))
+        # Slurm replaces '%a' by the corresponding SLURM_ARRAY_TASK_ID
+        outfile_fmt = '--output={0}' + ('_%a' if self.is_array(job) else '')
+        errfile_fmt = '--error={0}' + ('_%a' if self.is_array(job) else '')
+        preamble += [self._format_option(job.stdout, outfile_fmt),
+                     self._format_option(job.stderr, errfile_fmt)]
 
-        if self.sched_exclusive_access:
-            preamble.append(self._format_option(
-                self.sched_exclusive_access, '--exclusive'))
+        if job.time_limit is not None:
+            preamble.append(
+                self._format_option('%d:%d:%d' % job.time_limit, '--time={0}')
+            )
 
-        if self.use_smt is None:
+        if job.deadline is not None:
+            preamble.append(self._format_option(job.deadline, '--deadline={0}'))
+
+        if job.sched_exclusive_access:
+            preamble.append(
+                self._format_option(job.sched_exclusive_access, '--exclusive')
+            )
+
+        if job.use_smt is None:
             hint = None
         else:
-            hint = 'multithread' if self.use_smt else 'nomultithread'
+            hint = 'multithread' if job.use_smt else 'nomultithread'
 
-        for opt in self.sched_access:
+        for opt in job.sched_access:
             preamble.append('%s %s' % (self._prefix, opt))
 
         preamble.append(self._format_option(hint, '--hint={0}'))
         prefix_patt = re.compile(r'(#\w+)')
-        for opt in self.options:
+        for opt in job.options:
             if not prefix_patt.match(opt):
                 preamble.append('%s %s' % (self._prefix, opt))
             else:
@@ -143,8 +185,8 @@ class SlurmJob(sched.Job):
         # Filter out empty statements before returning
         return list(filter(None, preamble))
 
-    def submit(self):
-        cmd = 'sbatch %s' % self.script_filename
+    def submit(self, job):
+        cmd = 'sbatch %s' % job.script_filename
         completed = _run_strict(cmd, timeout=settings().job_submit_timeout)
         jobid_match = re.search(r'Submitted batch job (?P<jobid>\d+)',
                                 completed.stdout)
@@ -152,16 +194,16 @@ class SlurmJob(sched.Job):
             raise JobError(
                 'could not retrieve the job id of the submitted job')
 
-        self._jobid = int(jobid_match.group('jobid'))
+        job.jobid = int(jobid_match.group('jobid'))
 
-    def get_all_nodes(self):
+    def allnodes(self):
         try:
             completed = _run_strict('scontrol -a show -o nodes')
         except SpawnedProcessError as e:
             raise JobError('could not retrieve node information') from e
 
         node_descriptions = completed.stdout.splitlines()
-        return {SlurmNode(descr) for descr in node_descriptions}
+        return _create_nodes(node_descriptions)
 
     def _get_default_partition(self):
         completed = _run_strict('scontrol -a show -o partitions')
@@ -172,7 +214,35 @@ class SlurmJob(sched.Job):
 
         return None
 
-    def filter_nodes(self, nodes, options):
+    def _merge_files(self, job):
+        with os_ext.change_dir(job.workdir):
+            out_glob = glob.glob(job.stdout + '_*')
+            err_glob = glob.glob(job.stderr + '_*')
+            getlogger().debug(
+                'merging job array output files: %s' % ', '.join(out_glob))
+            os_ext.concat_files(job.stdout, *out_glob, overwrite=True)
+            getlogger().debug(
+                'merging job array error files: %s' % ','.join(err_glob))
+            os_ext.concat_files(job.stderr, *err_glob, overwrite=True)
+
+    def filternodes(self, job, nodes):
+        # Collect options that restrict node selection
+        options = job.sched_access + job.options
+        if job.sched_partition:
+            options.append('--partition=%s' % job.sched_partition)
+
+        if job.sched_account:
+            options.append('--account=%s' % job.sched_account)
+
+        if job.sched_nodelist:
+            options.append('--nodelist=%s' % job.sched_nodelist)
+
+        if job.sched_exclude_nodelist:
+            options.append('--exclude=%s' % job.sched_exclude_nodelist)
+
+        if job.sched_reservation:
+            options.append('--reservation=%s' % job.sched_reservation)
+
         option_parser = ArgumentParser()
         option_parser.add_argument('--reservation')
         option_parser.add_argument('-p', '--partition')
@@ -189,7 +259,7 @@ class SlurmJob(sched.Job):
             reservation = reservation.strip()
             nodes &= self._get_reservation_nodes(reservation)
             getlogger().debug(
-                'flex_alloc_tasks: filtering nodes by reservation %s: '
+                'flex_alloc_nodes: filtering nodes by reservation %s: '
                 'available nodes now: %s' % (reservation, len(nodes)))
 
         if partitions:
@@ -197,33 +267,33 @@ class SlurmJob(sched.Job):
         else:
             default_partition = self._get_default_partition()
             partitions = {default_partition} if default_partition else set()
-            getlogger().debug('flex_alloc_tasks: default partition: %s' %
+            getlogger().debug('flex_alloc_nodes: default partition: %s' %
                               default_partition)
 
         nodes = {n for n in nodes if n.partitions >= partitions}
         getlogger().debug(
-            'flex_alloc_tasks: filtering nodes by partition(s) %s: '
+            'flex_alloc_nodes: filtering nodes by partition(s) %s: '
             'available nodes now: %s' % (partitions, len(nodes)))
 
         if constraints:
             constraints = set(constraints.strip().split(','))
             nodes = {n for n in nodes if n.active_features >= constraints}
             getlogger().debug(
-                'flex_alloc_tasks: filtering nodes by constraint(s) %s: '
+                'flex_alloc_nodes: filtering nodes by constraint(s) %s: '
                 'available nodes now: %s' % (constraints, len(nodes)))
 
         if nodelist:
             nodelist = nodelist.strip()
             nodes &= self._get_nodes_by_name(nodelist)
             getlogger().debug(
-                'flex_alloc_tasks: filtering nodes by nodelist: %s '
+                'flex_alloc_nodes: filtering nodes by nodelist: %s '
                 'available nodes now: %s' % (nodelist, len(nodes)))
 
         if exclude_nodes:
             exclude_nodes = exclude_nodes.strip()
             nodes -= self._get_nodes_by_name(exclude_nodes)
             getlogger().debug(
-                'flex_alloc_tasks: excluding node(s): %s '
+                'flex_alloc_nodes: excluding node(s): %s '
                 'available nodes now: %s' % (exclude_nodes, len(nodes)))
 
         return nodes
@@ -239,80 +309,78 @@ class SlurmJob(sched.Job):
 
         completed = _run_strict('scontrol -a show -o %s' % reservation_nodes)
         node_descriptions = completed.stdout.splitlines()
-        return {SlurmNode(descr) for descr in node_descriptions}
+        return _create_nodes(node_descriptions)
 
     def _get_nodes_by_name(self, nodespec):
         completed = os_ext.run_command('scontrol -a show -o node %s' %
                                        nodespec)
         node_descriptions = completed.stdout.splitlines()
-        nodes_avail = set()
-        for descr in node_descriptions:
-            try:
-                nodes_avail.add(SlurmNode(descr))
-            except JobError:
-                pass
+        return _create_nodes(node_descriptions)
 
-        return nodes_avail
-
-    def _set_nodelist(self, nodespec):
-        if self._nodelist is not None:
+    def _set_nodelist(self, job, nodespec):
+        if job.nodelist is not None:
             return
 
         if nodespec and nodespec != 'None assigned':
-            self._nodelist = [n.name for n in
-                              self._get_nodes_by_name(nodespec)]
+            job.nodelist = [n.name for n in self._get_nodes_by_name(nodespec)]
 
-    def _update_state(self):
-        """Check the status of the job."""
+    def _update_state(self, job):
+        '''Check the status of the job.'''
 
         completed = _run_strict(
             'sacct -S %s -P -j %s -o jobid,state,exitcode,nodelist' %
-            (datetime.now().strftime('%F'), self._jobid)
+            (datetime.now().strftime('%F'), job.jobid)
         )
         self._update_state_count += 1
-        state_match = re.search(
-            r'^(?P<jobid>\d+)\|(?P<state>\S+)([^\|]*)\|'
-            r'(?P<exitcode>\d+)\:(?P<signal>\d+)\|(?P<nodespec>.*)',
-            completed.stdout, re.MULTILINE)
-        if state_match is None:
+
+        state_match = list(re.finditer(
+            r'^(?P<jobid>%s)\|(?P<state>\S+)([^\|]*)\|(?P<exitcode>\d+)\:'
+            r'(?P<signal>\d+)\|(?P<nodespec>.*)' % self._state_patt,
+            completed.stdout, re.MULTILINE))
+        if not state_match:
             getlogger().debug('job state not matched (stdout follows)\n%s' %
                               completed.stdout)
             return
 
-        self._state = SlurmJobState(state_match.group('state'))
-        if not self._update_state_count % SlurmJob.SACCT_SQUEUE_RATIO:
-            self._cancel_if_blocked()
+        # Join the states with ',' in case of job arrays
+        job.state = ','.join(s.group('state') for s in state_match)
+        if not self._update_state_count % self.SACCT_SQUEUE_RATIO:
+            self._cancel_if_blocked(job)
 
-        if self._state in self._completion_states:
-            self._exitcode = int(state_match.group('exitcode'))
+        if slurm_state_completed(job.state):
+            # Since Slurm exitcodes are positive take the maximum one
+            job.exitcode = max(int(s.group('exitcode')) for s in state_match)
 
-        self._set_nodelist(state_match.group('nodespec'))
+        # Use ',' to join nodes to be consistent with Slurm syntax
+        self._set_nodelist(
+            job, ','.join(s.group('nodespec') for s in state_match)
+        )
 
-    def _cancel_if_blocked(self):
-        if self._is_cancelling or self._state not in self._pending_states:
+    def _cancel_if_blocked(self, job):
+        if self._is_cancelling or not slurm_state_pending(job.state):
             return
 
-        completed = _run_strict('squeue -h -j %s -o %%r' % self._jobid)
+        completed = _run_strict('squeue -h -j %s -o %%r' % job.jobid)
         if not completed.stdout:
             # Can't retrieve job's state. Perhaps it has finished already and
             # does not show up in the output of squeue
             return
 
-        self._check_and_cancel(completed.stdout)
+        # For slurm job arrays the squeue output consists of multiple lines
+        for reason_descr in completed.stdout.splitlines():
+            self._check_and_cancel(job, reason_descr)
 
-    def _check_and_cancel(self, reason_descr):
-        """Check if blocking reason ``reason_descr`` is unrecoverable and
-        cancel the job in this case."""
+    def _check_and_cancel(self, job, reason_descr):
+        '''Check if blocking reason ``reason_descr`` is unrecoverable and
+        cancel the job in this case.'''
 
         # The reason description may have two parts as follows:
         # "ReqNodeNotAvail, UnavailableNodes:nid00[408,411-415]"
         try:
             reason, reason_details = reason_descr.split(',', maxsplit=1)
-            reason_details = reason_details.strip()
         except ValueError:
             # no reason details
             reason, reason_details = reason_descr, None
-        reason = reason.strip()
 
         if reason in self._cancel_reasons:
             if reason == 'ReqNodeNotAvail' and reason_details:
@@ -332,38 +400,40 @@ class SlurmJob(sched.Job):
                         # is pending
                         return
 
-            self.cancel(reason=reason)
+            self.cancel(job)
             reason_msg = ('job cancelled because it was blocked due to '
                           'a perhaps non-recoverable reason: ' + reason)
             if reason_details is not None:
                 reason_msg += ', ' + reason_details
 
-            raise JobBlockedError(reason_msg, jobid=self._jobid)
+            raise JobBlockedError(reason_msg, jobid=job.jobid)
 
-    def wait(self):
-        super().wait()
-
+    def wait(self, job):
         # Quickly return in case we have finished already
-        if self._state in self._completion_states:
+        if slurm_state_completed(job.state):
+            if self.is_array(job):
+                self._merge_files(job)
+
             return
 
         intervals = itertools.cycle(settings().job_poll_intervals)
-        self._update_state()
-        while self._state not in self._completion_states:
+        self._update_state(job)
+        while not slurm_state_completed(job.state):
             time.sleep(next(intervals))
-            self._update_state()
+            self._update_state(job)
 
-    def cancel(self, reason=None):
-        super().cancel(reason=reason)
-        getlogger().debug('cancelling job (id=%s)' % self._jobid)
-        _run_strict('scancel %s' % self._jobid,
+        if self.is_array(job):
+            self._merge_files(job)
+
+    def cancel(self, job):
+        getlogger().debug('cancelling job (id=%s)' % job.jobid)
+        _run_strict('scancel %s' % job.jobid,
                     timeout=settings().job_submit_timeout)
         self._is_cancelling = True
 
-    def finished(self):
-        super().finished()
+    def finished(self, job):
         try:
-            self._update_state()
+            self._update_state(job)
         except JobBlockedError:
             # Job blocked forever; reraise the exception to notify our caller
             raise
@@ -373,26 +443,43 @@ class SlurmJob(sched.Job):
             getlogger().debug('ignoring error during polling: %s' % e)
             return False
         else:
-            return self._state in self._completion_states
+            return slurm_state_completed(job.state)
+
+    def is_array(self, job):
+        if self._is_job_array is None:
+            option_parser = ArgumentParser()
+            option_parser.add_argument('-a', '--array')
+            parsed_args, _ = option_parser.parse_known_args(job.options)
+            jobs_array = parsed_args.array
+            if jobs_array:
+                self._is_job_array = True
+                getlogger().debug('detected job array option: %s' % jobs_array)
+            else:
+                self._is_job_array = False
+
+        return self._is_job_array
 
 
 @register_scheduler('squeue')
-class SqueueJob(SlurmJob):
-    """A Slurm job that uses squeue to query its state."""
+class SqueueJobScheduler(SlurmJobScheduler):
+    '''A Slurm job that uses squeue to query its state.'''
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.submit_time = None
-        self.squeue_delay = 2
+    def __init__(self):
+        super().__init__()
+        self._submit_time = None
+        self._squeue_delay = 2
         self._cancelled = False
 
-    def submit(self):
-        super().submit()
-        self.submit_time = datetime.now()
+    def completion_time(self, job):
+        return None
 
-    def _update_state(self):
-        time_from_submit = datetime.now() - self.submit_time
-        rem_wait = self.squeue_delay - time_from_submit.total_seconds()
+    def submit(self, job):
+        super().submit(job)
+        self._submit_time = datetime.now()
+
+    def _update_state(self, job):
+        time_from_submit = datetime.now() - self._submit_time
+        rem_wait = self._squeue_delay - time_from_submit.total_seconds()
         if rem_wait > 0:
             time.sleep(rem_wait)
 
@@ -400,35 +487,50 @@ class SqueueJob(SlurmJob):
         # finished already, squeue might return an error about an invalid
         # job id.
         completed = os_ext.run_command('squeue -h -j %s -o "%%T|%%N|%%r"' %
-                                       self._jobid)
-        state_match = re.search(r'^(?P<state>\S+)\|(?P<nodespec>\S*)\|'
-                                r'(?P<reason>.+)', completed.stdout)
-        if state_match is None:
+                                       job.jobid)
+        state_match = list(re.finditer(r'^(?P<state>\S+)\|(?P<nodespec>\S*)\|'
+                                       r'(?P<reason>.+)', completed.stdout))
+        if not state_match:
             # Assume that job has finished
-            self._state = (SLURM_JOB_CANCELLED if self._cancelled
-                           else SLURM_JOB_COMPLETED)
+            job.state = 'CANCELLED' if self._cancelled else 'COMPLETED'
 
             # Set exit code manually, if not set already by the polling
-            if self._exitcode is None:
-                self._exitcode = 0
+            if job.exitcode is None:
+                job.exitcode = 0
 
             return
 
-        self._state = SlurmJobState(state_match.group('state'))
-        self._set_nodelist(state_match.group('nodespec'))
-        if not self._is_cancelling and self._state in self._pending_states:
-            self._check_and_cancel(state_match.group('reason'))
+        # Join the states with ',' in case of job arrays
+        job.state = ','.join(s.group('state') for s in state_match)
 
-    def cancel(self, reason=None):
+        # Use ',' to join nodes to be consistent with Slurm syntax
+        self._set_nodelist(
+            job, ','.join(s.group('nodespec') for s in state_match)
+        )
+
+        if not self._is_cancelling and not slurm_state_pending(job.state):
+            for s in state_match:
+                self._check_and_cancel(job, s.group('reason'))
+
+    def cancel(self, job):
         # There is no reliable way to get the state of the job after it has
         # finished, so we explicitly mark it as cancelled here. The
         # _update_state() will make sure to return the approriate state.
-        super().cancel(reason=reason)
+        super().cancel(job)
         self._cancelled = True
 
 
-class SlurmNode:
-    """Class representing a Slurm node."""
+def _create_nodes(descriptions):
+    nodes = set()
+    for descr in descriptions:
+        with suppress(JobError):
+            nodes.add(_SlurmNode(descr))
+
+    return nodes
+
+
+class _SlurmNode(sched.Node):
+    '''Class representing a Slurm node.'''
 
     def __init__(self, node_descr):
         self._name = self._extract_attribute('NodeName', node_descr)

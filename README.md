@@ -2,6 +2,8 @@
 [![Documentation Status](https://readthedocs.org/projects/reframe-hpc/badge/?version=latest)](https://reframe-hpc.readthedocs.io/en/latest/?badge=latest)
 [![codecov.io](https://codecov.io/gh/eth-cscs/reframe/branch/master/graph/badge.svg)](https://codecov.io/github/eth-cscs/reframe)
 [![PyPI version](https://badge.fury.io/py/ReFrame-HPC.svg)](https://badge.fury.io/py/ReFrame-HPC)
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
+[![Slack](https://reframe-slack.herokuapp.com/badge.svg)](https://reframe-slack.herokuapp.com/)
 
 # ReFrame
 
@@ -46,8 +48,8 @@ Finally, you may access all previous versions of ReFrame [here](https://github.c
 
 You may find the official documentation of the latest release and the current master in the following links:
 
-- [Latest release](https://reframe-hpc.readthedocs.io)
-- [Current master](https://reframe-hpc.readthedocs.io/en/latest)
+- [Latest release](https://reframe-hpc.readthedocs.io/en/stable)
+- [Current master](https://reframe-hpc.readthedocs.io)
 
 
 ### Building the documentation locally
@@ -93,3 +95,9 @@ For unsubscribing, you may send an empty message to [reframe-unsubscribe@sympa.c
 ### Slack
 
 You may also reach the community through Slack [here](https://reframe-slack.herokuapp.com).
+
+
+## Contributing back
+
+ReFrame is an open-source project and we welcome third-party contributions.
+Check out our Contribution Guide [here](https://github.com/eth-cscs/reframe/wiki/contributing-to-reframe).

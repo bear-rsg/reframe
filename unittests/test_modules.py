@@ -3,8 +3,8 @@ import os
 import unittest
 from tempfile import NamedTemporaryFile
 
+import reframe.core.environments as env
 import reframe.core.modules as modules
-from reframe.core.environments import EnvironmentSnapshot
 from reframe.core.exceptions import ConfigError, EnvironError
 from reframe.core.runtime import runtime
 from unittests.fixtures import TEST_MODULES
@@ -12,11 +12,11 @@ from unittests.fixtures import TEST_MODULES
 
 class _TestModulesSystem(abc.ABC):
     def setUp(self):
-        self.environ_save = EnvironmentSnapshot()
+        self.environ_save = env.snapshot()
         self.modules_system.searchpath_add(TEST_MODULES)
 
     def tearDown(self):
-        self.environ_save.load()
+        self.environ_save.restore()
 
     def test_searchpath(self):
         self.assertIn(TEST_MODULES, self.modules_system.searchpath)
@@ -69,11 +69,11 @@ class _TestModulesSystem(abc.ABC):
 
     @abc.abstractmethod
     def expected_load_instr(self, module):
-        """Expected load instruction."""
+        '''Expected load instruction.'''
 
     @abc.abstractmethod
     def expected_unload_instr(self, module):
-        """Expected unload instruction."""
+        '''Expected unload instruction.'''
 
     def test_emit_load_commands(self):
         self.modules_system.module_map = {
@@ -216,7 +216,7 @@ class TestModule(unittest.TestCase):
 
 
 class ModulesSystemEmulator(modules.ModulesSystemImpl):
-    """A convenience class that simulates a modules system."""
+    '''A convenience class that simulates a modules system.'''
 
     def __init__(self):
         self._loaded_modules = set()
@@ -267,9 +267,6 @@ class ModulesSystemEmulator(modules.ModulesSystemImpl):
         return ''
 
     def emit_unload_instr(self, module):
-        return ''
-    
-    def emit_unload_all(self):
         return ''
 
 
@@ -458,14 +455,16 @@ class TestModuleMapping(unittest.TestCase):
         self.assertRaises(EnvironError, self.modules_system.load_module, 'm0')
         self.assertRaises(EnvironError, self.modules_system.load_module, 'm1')
 
-    def test_mapping_cycle_self(self):
+    def test_mapping_single_module_self_loop(self):
         #
         # m0 -> m0
         #
         self.modules_system.module_map = {
             'm0': ['m0'],
         }
-        self.assertRaises(EnvironError, self.modules_system.load_module, 'm0')
+        self.modules_system.load_module('m0')
+        assert self.modules_system.is_module_loaded('m0')
+        assert ['m0'] == self.modules_system.backend.load_seq
 
     def test_mapping_deep_cycle(self):
         #
@@ -502,7 +501,7 @@ class TestModuleMapping(unittest.TestCase):
         self.modules_system.load_mapping_from_file(self.mapping_file.name)
         self.assertEqual(reference_map, self.modules_system.module_map)
 
-    def test_maping_from_file_missing_key_separator(self):
+    def test_mapping_from_file_missing_key_separator(self):
         with self.mapping_file:
             self.mapping_file.write('m1 m2')
 
@@ -510,7 +509,7 @@ class TestModuleMapping(unittest.TestCase):
                           self.modules_system.load_mapping_from_file,
                           self.mapping_file.name)
 
-    def test_maping_from_file_empty_value(self):
+    def test_mapping_from_file_empty_value(self):
         with self.mapping_file:
             self.mapping_file.write('m1: # m2')
 
@@ -518,7 +517,7 @@ class TestModuleMapping(unittest.TestCase):
                           self.modules_system.load_mapping_from_file,
                           self.mapping_file.name)
 
-    def test_maping_from_file_multiple_key_separators(self):
+    def test_mapping_from_file_multiple_key_separators(self):
         with self.mapping_file:
             self.mapping_file.write('m1 : m2 : m3')
 
@@ -526,7 +525,7 @@ class TestModuleMapping(unittest.TestCase):
                           self.modules_system.load_mapping_from_file,
                           self.mapping_file.name)
 
-    def test_maping_from_file_empty_key(self):
+    def test_mapping_from_file_empty_key(self):
         with self.mapping_file:
             self.mapping_file.write(' :  m2')
 
@@ -534,7 +533,32 @@ class TestModuleMapping(unittest.TestCase):
                           self.modules_system.load_mapping_from_file,
                           self.mapping_file.name)
 
-    def test_maping_from_file_missing_file(self):
+    def test_mapping_from_file_missing_file(self):
         self.assertRaises(OSError,
                           self.modules_system.load_mapping_from_file,
                           'foo')
+
+    def test_mapping_with_self_loop(self):
+        self.modules_system.module_map = {
+            'm0': ['m1', 'm0', 'm2'],
+            'm1': ['m4', 'm3']
+        }
+        self.modules_system.load_module('m0')
+        assert self.modules_system.is_module_loaded('m0')
+        assert self.modules_system.is_module_loaded('m1')
+        assert self.modules_system.is_module_loaded('m2')
+        assert self.modules_system.is_module_loaded('m3')
+        assert self.modules_system.is_module_loaded('m4')
+        assert ['m4', 'm3', 'm0', 'm2'] == self.modules_system.backend.load_seq
+
+    def test_mapping_with_self_loop_and_duplicate_modules(self):
+        self.modules_system.module_map = {
+            'm0': ['m0', 'm0', 'm1', 'm1'],
+            'm1': ['m2', 'm3']
+        }
+        self.modules_system.load_module('m0')
+        assert self.modules_system.is_module_loaded('m0')
+        assert self.modules_system.is_module_loaded('m1')
+        assert self.modules_system.is_module_loaded('m2')
+        assert self.modules_system.is_module_loaded('m3')
+        assert ['m0', 'm2', 'm3'] == self.modules_system.backend.load_seq

@@ -509,7 +509,8 @@ They are summarized below:
   In this example, Slurm's policy is that later definitions of options override previous ones.
   So, in this case, way you would override the standard output for all the submitted jobs!
 
-* ``--flex-alloc-tasks {all|idle|NUM}``: Automatically determine the number of tasks allocated for each test.
+* ``--flex-alloc-tasks {all|idle|NUM}``: (Deprecated) Please use ``--flex-alloc-nodes`` instead.
+* ``--flex-alloc-nodes {all|idle|NUM}``: Automatically determine the number of nodes allocated for each test.
 * ``--force-local``: Force the local execution of the selected tests.
   No jobs will be submitted.
 * ``--skip-sanity-check``: Skip sanity checking phase.
@@ -543,27 +544,31 @@ The performance report is printed after the output of the regression tests and h
   Check1
   - system:partition
       - PrgEnv1
+          * num_tasks: <num_tasks>
           * perf_variable1: <value> <units>
           * perf_variable2: <value> <units>
           * ...
       - PrgEnv2
-          : perf_variable1: <value> <units>
-          : perf_variable2: <value> <units>
+          * num_tasks: <num_tasks>
+          * perf_variable1: <value> <units>
+          * perf_variable2: <value> <units>
           * ...
   ------------------------------------------------------------------------------
   Check2
   - system:partition
       - PrgEnv1
+          * num_tasks: <num_tasks>
           * perf_variable1: <value> <units>
           * perf_variable2: <value> <units>
           * ...
       - PrgEnv2
+          * num_tasks: <num_tasks>
           * perf_variable1: <value> <units>
           * perf_variable2: <value> <units>
           * ...
   ------------------------------------------------------------------------------
 
-Achieved performance values are listed by system partition and programming environment for each performance test that has run.
+The number of tasks and the achieved performance values are listed by system partition and programming environment for each performance test that has run.
 Performance variables are the variables collected through the :attr:`reframe.core.pipeline.RegressionTest.perf_patterns` attribute.
 
 The following command will run the CUDA matrix-vector multiplication example from the `tutorial <tutorial.html>`__ and will produce a performance report:
@@ -575,7 +580,7 @@ The following command will run the CUDA matrix-vector multiplication example fro
 .. code-block:: none
 
   Command line: ./bin/reframe -C tutorial/config/settings.py -c tutorial/example7.py -r --performance-report
-  Reframe version: 2.18-dev1
+  Reframe version: 2.20-dev2
   Launched by user: USER
   Launched on host: daint101
   Reframe paths
@@ -586,7 +591,7 @@ The following command will run the CUDA matrix-vector multiplication example fro
       Output dir prefix    : /path/to/reframe/output/
       Perf. logging prefix : /path/to/reframe/perflogs
   [==========] Running 1 check(s)
-  [==========] Started on Mon Apr 15 13:49:34 2019
+  [==========] Started on Thu Oct 24 17:46:55 2019
 
   [----------] started processing Example7Test (Matrix-vector multiplication (CUDA performance test))
   [ RUN      ] Example7Test on daint:gpu using PrgEnv-cray
@@ -598,25 +603,28 @@ The following command will run the CUDA matrix-vector multiplication example fro
   [----------] finished processing Example7Test (Matrix-vector multiplication (CUDA performance test))
 
   [  PASSED  ] Ran 3 test case(s) from 1 check(s) (0 failure(s))
-  [==========] Finished on Mon Apr 15 13:55:22 2019
+  [==========] Finished on Thu Oct 24 17:47:34 2019
   ==============================================================================
   PERFORMANCE REPORT
   ------------------------------------------------------------------------------
   Example7Test
   - daint:gpu
      - PrgEnv-cray
-        * perf: 49.994311 Gflop/s
+        * num_tasks: 1
+        * perf: 49.403965 Gflop/s
      - PrgEnv-gnu
-        * perf: 50.748701 Gflop/s
+        * num_tasks: 1
+        * perf: 50.093877 Gflop/s
      - PrgEnv-pgi
-        * perf: 49.844147 Gflop/s
+        * num_tasks: 1
+        * perf: 50.549009 Gflop/s
   ------------------------------------------------------------------------------
 
 
 For completeness, we show here the corresponding section from the ``Example7Test``, so that the connection between the test's code and the output becomes clear:
 
 .. literalinclude:: ../tutorial/example7.py
-  :lines: 20-28
+  :lines: 19-27
   :dedent: 8
 
 
@@ -784,7 +792,7 @@ Logging in ReFrame is configured by the ``logging_config`` variable in the ``ref
 The default configuration looks as follows:
 
 .. literalinclude:: ../reframe/settings.py
-  :lines: 51-78
+  :lines: 47-74
   :dedent: 4
 
 Note that this configuration dictionary is not the same as the one used by Python's logging framework.
@@ -838,8 +846,17 @@ All handlers accept the following set of attributes (keys) in their configuratio
     It can be configured on a per test basis by overriding the :func:`info <reframe.core.pipeline.RegressionTest.info>` method of a specific regression test.
   - ``check_jobid``: Prints the job or process id of the job or process associated with the currently executing regression test.
     If a job or process is not yet created, ``-1`` will be printed.
+  - ``check_job_completion_time``: *[new in 2.21]* The completion time of the job spawned by this regression test.
+    This timestamp will be formatted according to ``datefmt`` (see below).
+    The accuracy of the timestamp depends on the backend scheduler.
+    The ``slurm`` scheduler backend relies on job accounting and returns the actual termination time of the job.
+    The rest of the backends report as completion time the moment when the framework realizes that the spawned job has finished.
+    In this case, the accuracy depends on the execution policy used.
+    If tests are executed with the serial execution policy, this is close to the real completion time, but if the asynchronous execution policy is used, it can differ significantly.
+    If the job completion time cannot be retrieved, ``None`` will be printed.
   - ``check_name``: Prints the name of the regression test on behalf of which ReFrame is currently executing.
     If ReFrame is not in the context of regression test, ``reframe`` will be printed.
+  - ``check_num_tasks``: The number of tasks assigned to the regression test.
   - ``check_outputdir``: The output directory associated with the currently executing test.
   - ``check_partition``: The system partition where this test is currently executing.
   - ``check_stagedir``: The stage directory associated with the currently executing test.
@@ -908,7 +925,7 @@ ReFrame supports an additional logging facility for recording performance values
 This is configured by the ``perf_logging_config`` variables, whose syntax is the same as for the ``logging_config``:
 
 .. literalinclude:: ../reframe/settings.py
-  :lines: 80-99
+  :lines: 76-95
   :dedent: 4
 
 Performance logging introduces two new log record handlers, specifically designed for this purpose.
@@ -967,14 +984,17 @@ The attributes of this handler are the following:
   - ``check_perf_var``: The name of the `performance variable <tutorial.html#writing-a-performance-test>`__, whose value is logged.
   - ``check_perf_unit``: The unit of measurement for the measured performance variable, if specified in the corresponding tuple of the :attr:`reframe.core.pipeline.RegressionTest.reference` attribute.
 
+.. note::
+   .. versionchanged:: 2.20
+      Support for logging `num_tasks` in performance logs was added.
+
 Using the default performance log format, the resulting log entries look like the following:
 
 .. code-block:: none
 
-  2018-05-30T00:14:53|reframe 2.13-dev0|Example7Test on daint:gpu using PrgEnv-gnu|jobid=749667|perf=49.152408|ref=50.0 (l=-0.1, u=0.1)
-  2018-05-30T00:14:53|reframe 2.13-dev0|Example7Test on daint:gpu using PrgEnv-pgi|jobid=749668|perf=48.930356|ref=50.0 (l=-0.1, u=0.1)
-  2018-05-30T00:14:53|reframe 2.13-dev0|Example7Test on daint:gpu using PrgEnv-cray|jobid=749666|perf=48.914735|ref=50.0 (l=-0.1, u=0.1)
-
+    2019-10-23T13:46:05|reframe 2.20-dev2|Example7Test on daint:gpu using PrgEnv-cray|jobid=813559|num_tasks=1|perf=49.681565|ref=50.0 (l=-0.1, u=0.1)|Gflop/s
+    2019-10-23T13:46:27|reframe 2.20-dev2|Example7Test on daint:gpu using PrgEnv-gnu|jobid=813560|num_tasks=1|perf=50.737651|ref=50.0 (l=-0.1, u=0.1)|Gflop/s
+    2019-10-23T13:46:48|reframe 2.20-dev2|Example7Test on daint:gpu using PrgEnv-pgi|jobid=813561|num_tasks=1|perf=50.720164|ref=50.0 (l=-0.1, u=0.1)|Gflop/s
 
 The interpretation of the performance values depends on the individual tests.
 The above output is from the CUDA performance test we presented in the `tutorial <tutorial.html#writing-a-performance-test>`__, so the value refers to the achieved Gflop/s.
@@ -997,6 +1017,7 @@ An example configuration of such a handler is the following:
       'format': (
           '%(asctime)s|reframe %(version)s|'
           '%(check_info)s|jobid=%(check_jobid)s|'
+          'num_tasks=%(check_num_tasks)s|'
           '%(check_perf_var)s=%(check_perf_value)s|'
           'ref=%(check_perf_ref)s '
           '(l=%(check_perf_lower_thres)s, '
@@ -1137,6 +1158,10 @@ Manipulating modules
 
 .. versionadded:: 2.11
 
+.. note::
+   .. versionchanged:: 2.19
+      Module self loops are now allowed in *module mappings*.
+
 ReFrame allows you to change the modules loaded by a regression test on-the-fly without having to edit the regression test file.
 This feature is extremely useful when you need to quickly test a newer version of a module, but it also allows you to completely decouple the module names used in your regression tests from the real module names in a system, thus making your test even more portable.
 This is achieved by defining *module mappings*.
@@ -1206,33 +1231,73 @@ If you now try to run a test that loads the module `cudatoolkit`, the following 
      * Reason: caught framework exception: module cyclic dependency: cudatoolkit->foo->bar->foobar->cudatoolkit
    ------------------------------------------------------------------------------
 
-Controlling the Flexible Task Allocation
+On the other hand, module mappings containing self loops are allowed.
+In the following example, ReFrame will load both ``module-1`` and ``module-2`` whenever the ``module-1`` is encountered:
+
+.. code-block:: none
+
+  --map-module 'module-1: module-1 module-2'
+
+Controlling the Flexible Node Allocation
 ----------------------------------------
 
 .. versionadded:: 2.15
 
+.. note::
+   .. versionchanged:: 2.21
+      Flexible task allocation is now based on number of nodes.
+
+.. warning::
+      The command line option ``--flex-alloc-tasks`` is now deprecated, you should use ``--flex-alloc-nodes`` instead.
+
+
 ReFrame can automatically set the number of tasks of a particular test, if its :attr:`num_tasks <reframe.core.pipeline.RegressionTest.num_tasks>` attribute is set to a value ``<=0``.
 By default, ReFrame will spawn such a test on all the idle nodes of the current system partition.
-This behavior can be adjusted using the ``--flex-alloc-tasks`` command line option.
+This behavior can be adjusted using the ``--flex-alloc-nodes`` command line option.
 This option accepts three values:
 
   1. ``idle``: (default) In this case, ReFrame will set the number of tasks to the number of idle nodes of the current logical partition multiplied by the :attr:`num_tasks_per_node <reframe.core.pipeline.RegressionTest.num_tasks_per_node>` attribute of the particular test.
   2. ``all``: In this case, ReFrame will set the number of tasks to the number of all the nodes of the current logical partition multiplied by the :attr:`num_tasks_per_node <reframe.core.pipeline.RegressionTest.num_tasks_per_node>` attribute of the particular test.
 
-  3. Any positive integer: In this case, ReFrame will set the number of tasks to the given value.
+  3. Any positive integer: In this case, ReFrame will set the number of tasks to the given value multiplied by the :attr:`num_tasks_per_node <reframe.core.pipeline.RegressionTest.num_tasks_per_node>` attribute of the particular test.
 
-The flexible allocation of number of tasks takes into account any additional logical constraint imposed by the command line options affecting the job allocation, such as ``--partition``, ``--reservation``, ``--nodelist``, ``--exclude-nodes`` and ``--job-option`` (if the scheduler option passed to the latter imposes a restriction).
+The flexible allocation of number of nodes takes into account any additional logical constraint imposed by the command line options affecting the job allocation, such as ``--partition``, ``--reservation``, ``--nodelist``, ``--exclude-nodes`` and ``--job-option`` (if the scheduler option passed to the latter imposes a restriction).
 Notice that ReFrame will issue an error if the resulting number of nodes is zero.
 
 For example, using the following options would run a flexible test on all the nodes of reservation ``foo`` except the nodes ``n0[1-5]``:
 
 .. code-block:: bash
 
-  --flex-alloc-tasks=all --reservation=foo --exclude-nodes=n0[1-5]
+  --flex-alloc-nodes=all --reservation=foo --exclude-nodes=n0[1-5]
 
 
 .. note::
-   Flexible task allocation is supported only for the Slurm scheduler backend.
+   Flexible node allocation is supported only for the Slurm scheduler backend.
 
 .. warning::
    Test cases resulting from flexible ReFrame tests may not be run using the asynchronous execution policy, because the nodes satisfying the required criteria will be allocated for the first test case, causing all subsequent ones to fail.
+
+Testing non-default Cray Programming Environments
+-------------------------------------------------
+
+.. versionadded:: 2.20
+
+
+Cray machines provide a set of compilers, scientific software libraries and an MPI implementation that is optimized for the Cray hardware.
+These comprise the Cray Programming Environment (PE).
+All the functionality of the PE is structured around the default versions (or modules) of the libraries.
+If a non-default library or a non-default PE are to be tested, users have to do the following after having loaded all of their Cray modules:
+
+.. code:: bash
+
+   export LD_LIBRARY_PATH=$CRAY_LD_LIBRARY_PATH:$LD_LIBRARY_PATH
+
+
+In order to test a non-default Cray Programming Environment with ReFrame you have to pass the ``--non-default-craype``.
+This will cause ReFrame to export ``LD_LIBRARY_PATH`` as shown above.
+Here is an example that shows how to test a non-default Cray PE with ReFrame:
+
+.. code:: bash
+
+   module load cdt/19.08
+   reframe <options> --non-default-craype  -r

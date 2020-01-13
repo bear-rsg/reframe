@@ -8,17 +8,19 @@ from reframe.core.environments import Environment
 
 
 class SystemPartition:
-    """A representation of a system partition inside ReFrame.
+    '''A representation of a system partition inside ReFrame.
 
     This class is immutable.
-    """
+    '''
 
-    _name      = fields.TypedField('_name', typ.Str['(\w|-)+'])
+    _name      = fields.TypedField('_name', typ.Str[r'(\w|-)+'])
     _descr     = fields.TypedField('_descr', str)
     _access    = fields.TypedField('_access', typ.List[str])
     _environs  = fields.TypedField('_environs', typ.List[Environment])
     _resources = fields.TypedField('_resources', typ.Dict[str, typ.List[str]])
     _local_env = fields.TypedField('_local_env', Environment, type(None))
+    _container_environs = fields.TypedField('_container_environs',
+                                            typ.Dict[str, Environment])
 
     # maximum concurrent jobs
     _max_jobs  = fields.TypedField('_max_jobs', int)
@@ -35,6 +37,7 @@ class SystemPartition:
         self._resources = dict(resources)
         self._max_jobs  = max_jobs
         self._local_env = local_env
+        self._container_environs = {}
 
         # Parent system
         self._system = None
@@ -45,7 +48,7 @@ class SystemPartition:
 
     @property
     def descr(self):
-        """A detailed description of this partition."""
+        '''A detailed description of this partition.'''
         return self._descr
 
     @property
@@ -53,14 +56,18 @@ class SystemPartition:
         return utility.SequenceView(self._environs)
 
     @property
+    def container_environs(self):
+        return utility.MappingView(self._container_environs)
+
+    @property
     def fullname(self):
-        """Return the fully-qualified name of this partition.
+        '''Return the fully-qualified name of this partition.
 
         The fully-qualified name is of the form
         ``<parent-system-name>:<partition-name>``.
 
         :type: `str`
-        """
+        '''
         if self._system is None:
             return self._name
         else:
@@ -76,10 +83,10 @@ class SystemPartition:
 
     @property
     def name(self):
-        """The name of this partition.
+        '''The name of this partition.
 
         :type: `str`
-        """
+        '''
         return self._name
 
     @property
@@ -88,7 +95,7 @@ class SystemPartition:
 
     @property
     def scheduler(self):
-        """The type of the backend scheduler of this partition.
+        '''The type of the backend scheduler of this partition.
 
         :returns: a subclass of :class:`reframe.core.schedulers.Job`.
 
@@ -97,19 +104,22 @@ class SystemPartition:
 
            Prior versions returned a string representing the scheduler and job
            launcher combination.
-        """
+        '''
         return self._scheduler
 
     @property
     def launcher(self):
-        """The type of the backend launcher of this partition.
+        '''The type of the backend launcher of this partition.
 
         :returns: a subclass of :class:`reframe.core.launchers.JobLauncher`.
 
         .. note::
            .. versionadded:: 2.8
-        """
+        '''
         return self._launcher
+
+    def add_container_env(self, env_name, environ):
+        self._container_environs[env_name] = environ
 
     # Instantiate managed resource `name` with `value`.
     def get_resource(self, name, **values):
@@ -159,14 +169,14 @@ class SystemPartition:
 
 
 class System:
-    """A representation of a system inside ReFrame."""
+    '''A representation of a system inside ReFrame.'''
     _name  = fields.TypedField('_name', typ.Str[r'(\w|-)+'])
     _descr = fields.TypedField('_descr', str)
     _hostnames  = fields.TypedField('_hostnames', typ.List[str])
     _partitions = fields.TypedField('_partitions', typ.List[SystemPartition])
     _modules_system = fields.TypedField('_modules_system',
                                         typ.Str[r'(\w|-)+'], type(None))
-
+    _preload_env = fields.TypedField('_preload_env', Environment, type(None))
     _prefix = fields.TypedField('_prefix', str)
     _stagedir  = fields.TypedField('_stagedir', str, type(None))
     _outputdir = fields.TypedField('_outputdir', str, type(None))
@@ -174,14 +184,14 @@ class System:
     _resourcesdir = fields.TypedField('_resourcesdir', str)
 
     def __init__(self, name, descr=None, hostnames=[], partitions=[],
-                 prefix='.', stagedir=None, outputdir=None, perflogdir=None,
-                 resourcesdir='.', modules_system=None, modules_system_purge=False):
+                 preload_env=None, prefix='.', stagedir=None, outputdir=None,
+                 perflogdir=None, resourcesdir='.', modules_system=None):
         self._name  = name
         self._descr = descr or name
         self._hostnames  = list(hostnames)
         self._partitions = list(partitions)
         self._modules_system = modules_system
-        self._modules_system_purge = modules_system_purge
+        self._preload_env = preload_env
         self._prefix = prefix
         self._stagedir = stagedir
         self._outputdir = outputdir
@@ -194,52 +204,56 @@ class System:
 
     @property
     def name(self):
-        """The name of this system."""
+        '''The name of this system.'''
         return self._name
 
     @property
     def descr(self):
-        """The description of this system."""
+        '''The description of this system.'''
         return self._descr
 
     @property
     def hostnames(self):
-        """The hostname patterns associated with this system."""
+        '''The hostname patterns associated with this system.'''
         return self._hostnames
 
     @property
     def modules_system(self):
-        """The modules system name associated with this system."""
+        '''The modules system name associated with this system.'''
         return self._modules_system
 
     @property
-    def modules_system_purge(self):
-        """If the modules system should purge before each call."""
-        return self._modules_system_purge
+    def preload_environ(self):
+        '''The environment to load whenever ReFrame runs on this system.
+
+        .. note::
+           .. versionadded:: 2.19
+        '''
+        return self._preload_env
 
     @property
     def prefix(self):
-        """The ReFrame prefix associated with this system."""
+        '''The ReFrame prefix associated with this system.'''
         return self._prefix
 
     @property
     def stagedir(self):
-        """The ReFrame stage directory prefix associated with this system."""
+        '''The ReFrame stage directory prefix associated with this system.'''
         return self._stagedir
 
     @property
     def outputdir(self):
-        """The ReFrame output directory prefix associated with this system."""
+        '''The ReFrame output directory prefix associated with this system.'''
         return self._outputdir
 
     @property
     def perflogdir(self):
-        """The ReFrame log directory prefix associated with this system."""
+        '''The ReFrame log directory prefix associated with this system.'''
         return self._perflogdir
 
     @property
     def resourcesdir(self):
-        """Global resources directory for this system.
+        '''Global resources directory for this system.
 
         You may use this directory for storing large resource files of your
         regression tests.
@@ -247,12 +261,12 @@ class System:
         this.
 
         :type: :class:`str`
-        """
+        '''
         return self._resourcesdir
 
     @property
     def partitions(self):
-        """All the system partitions associated with this system."""
+        '''All the system partitions associated with this system.'''
         return utility.SequenceView(self._partitions)
 
     def add_partition(self, partition):

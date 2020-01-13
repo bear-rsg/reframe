@@ -4,9 +4,10 @@ import sys
 import weakref
 
 import reframe.core.debug as debug
+import reframe.core.environments as env
 import reframe.core.logging as logging
 import reframe.core.runtime as runtime
-from reframe.core.environments import EnvironmentSnapshot
+import reframe.frontend.dependency as dependency
 from reframe.core.exceptions import (AbortTaskError, JobNotStartedError,
                                      ReframeFatalError, TaskExit)
 from reframe.frontend.printer import PrettyPrinter
@@ -16,9 +17,9 @@ ABORT_REASONS = (KeyboardInterrupt, ReframeFatalError, AssertionError)
 
 
 class TestCase:
-    """A combination of a regression check, a system partition
+    '''A combination of a regression check, a system partition
     and a programming environment.
-    """
+    '''
 
     def __init__(self, check, partition, environ):
         self.__check_orig = check
@@ -27,6 +28,9 @@ class TestCase:
         self.__environ = copy.deepcopy(environ)
         self.__check._case = weakref.ref(self)
         self.__deps = []
+
+        # Incoming dependencies
+        self.in_degree = 0
 
     def __iter__(self):
         # Allow unpacking a test case with a single liner:
@@ -66,6 +70,10 @@ class TestCase:
     def deps(self):
         return self.__deps
 
+    @property
+    def num_dependents(self):
+        return self.in_degree
+
     def clone(self):
         # Return a fresh clone, i.e., one based on the original check
         return TestCase(self.__check_orig, self.__partition, self.__environ)
@@ -75,7 +83,7 @@ def generate_testcases(checks,
                        skip_system_check=False,
                        skip_environ_check=False,
                        allowed_environs=None):
-    """Generate concrete test cases from checks."""
+    '''Generate concrete test cases from checks.'''
 
     def supports_partition(c, p):
         return skip_system_check or c.supports_system(p.fullname)
@@ -99,16 +107,19 @@ def generate_testcases(checks,
 
 
 class RegressionTask:
-    """A class representing a :class:`RegressionTest` through the regression
-    pipeline."""
+    '''A class representing a :class:`RegressionTest` through the regression
+    pipeline.'''
 
     def __init__(self, case, listeners=[]):
         self._case = case
         self._failed_stage = None
-        self._current_stage = None
+        self._current_stage = 'startup'
         self._exc_info = (None, None, None)
-        self._environ = None
         self._listeners = list(listeners)
+
+        # Reference count for dependent tests; safe to cleanup the test only
+        # if it is zero
+        self.ref_count = case.num_dependents
 
         # Test case has finished, but has not been waited for yet
         self.zombie = False
@@ -133,13 +144,19 @@ class RegressionTask:
     def failed_stage(self):
         return self._failed_stage
 
+    @property
+    def succeeded(self):
+        return self._current_stage in {'finalize', 'cleanup'}
+
     def _notify_listeners(self, callback_name):
         for l in self._listeners:
             callback = getattr(l, callback_name)
             callback(self)
 
     def _safe_call(self, fn, *args, **kwargs):
-        self._current_stage = fn.__name__
+        if fn.__name__ != 'poll':
+            self._current_stage = fn.__name__
+
         try:
             with logging.logging_context(self.check) as logger:
                 logger.debug('entering stage: %s' % self._current_stage)
@@ -153,7 +170,7 @@ class RegressionTask:
 
     def setup(self, *args, **kwargs):
         self._safe_call(self.check.setup, *args, **kwargs)
-        self._environ = EnvironmentSnapshot()
+        self._notify_listeners('on_task_setup')
 
     def compile(self):
         self._safe_call(self.check.compile)
@@ -183,23 +200,17 @@ class RegressionTask:
     def performance(self):
         self._safe_call(self.check.performance)
 
+    def finalize(self):
+        self._current_stage = 'finalize'
+        self._notify_listeners('on_task_success')
+
     def cleanup(self, *args, **kwargs):
         self._safe_call(self.check.cleanup, *args, **kwargs)
-        self._notify_listeners('on_task_success')
 
     def fail(self, exc_info=None):
         self._failed_stage = self._current_stage
         self._exc_info = exc_info or sys.exc_info()
         self._notify_listeners('on_task_failure')
-
-    def resume(self):
-        self._environ.load()
-
-    def cancelled(self):
-        return self.check.job.cancelled
-
-    def cancel_reason(self):
-        return self.check.job.cancel_reason
 
     def abort(self, cause=None):
         logging.getlogger().debug('aborting: %s' % self.check.info())
@@ -220,25 +231,29 @@ class RegressionTask:
 
 class TaskEventListener(abc.ABC):
     @abc.abstractmethod
+    def on_task_setup(self, task):
+        '''Called whenever the setup() method of a RegressionTask is called.'''
+
+    @abc.abstractmethod
     def on_task_run(self, task):
-        """Called whenever the run() method of a RegressionTask is called."""
+        '''Called whenever the run() method of a RegressionTask is called.'''
 
     @abc.abstractmethod
     def on_task_exit(self, task):
-        """Called whenever a RegressionTask finishes."""
+        '''Called whenever a RegressionTask finishes.'''
 
     @abc.abstractmethod
     def on_task_failure(self, task):
-        """Called when a regression test has failed."""
+        '''Called when a regression test has failed.'''
 
     @abc.abstractmethod
     def on_task_success(self, task):
-        """Called when a regression test has succeeded."""
+        '''Called when a regression test has succeeded.'''
 
 
 class Runner:
-    """Responsible for executing a set of regression tests based on an
-    execution policy."""
+    '''Responsible for executing a set of regression tests based on an
+    execution policy.'''
 
     def __init__(self, policy, printer=None, max_retries=0):
         self._policy = policy
@@ -247,7 +262,6 @@ class Runner:
         self._stats = TestStats()
         self._policy.stats = self._stats
         self._policy.printer = self._printer
-        self._environ_snapshot = EnvironmentSnapshot()
 
     def __repr__(self):
         return debug.repr(self)
@@ -280,7 +294,6 @@ class Runner:
                 (len(testcases), num_checks, num_failures), just='center'
             )
             self._printer.timestamp('Finished on', 'short double line')
-            self._environ_snapshot.load()
 
     def _retry_failed(self, cases):
         rt = runtime.runtime()
@@ -294,7 +307,12 @@ class Runner:
                 'Retrying %d failed check(s) (retry %d/%d)' %
                 (num_failed_checks, rt.current_run, self._max_retries)
             )
-            self._runall(t.testcase.clone() for t in failures)
+
+            # Clone failed cases and rebuild dependencies among them
+            failed_cases = [t.testcase.clone() for t in failures]
+            cases_graph = dependency.build_deps(failed_cases, cases)
+            failed_cases = dependency.toposort(cases_graph, is_subgraph=True)
+            self._runall(failed_cases)
             failures = self._stats.failures()
 
     def _runall(self, testcases):
@@ -315,7 +333,6 @@ class Runner:
                 print_separator(t.check, 'started processing')
                 last_check = t.check
 
-            self._environ_snapshot.load()
             self._policy.runcase(t)
 
         # Close the last visual box
@@ -327,9 +344,9 @@ class Runner:
 
 
 class ExecutionPolicy(abc.ABC):
-    """Base abstract class for execution policies.
+    '''Base abstract class for execution policies.
 
-    An execution policy implements the regression check pipeline."""
+    An execution policy implements the regression check pipeline.'''
 
     def __init__(self):
         # Options controlling the check execution
@@ -344,7 +361,7 @@ class ExecutionPolicy(abc.ABC):
         self.strict_check = False
 
         # Scheduler options
-        self.sched_flex_alloc_tasks = None
+        self.sched_flex_alloc_nodes = None
         self.sched_account = None
         self.sched_partition = None
         self.sched_reservation = None
@@ -368,7 +385,7 @@ class ExecutionPolicy(abc.ABC):
 
     @abc.abstractmethod
     def runcase(self, case):
-        """Run a test case."""
+        '''Run a test case.'''
 
         if self.strict_check:
             case.check.strict_check = True

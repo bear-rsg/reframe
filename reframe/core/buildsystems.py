@@ -7,15 +7,16 @@ from reframe.core.exceptions import BuildSystemError
 
 
 class BuildSystem(abc.ABC):
-    """The abstract base class of any build system.
+    '''The abstract base class of any build system.
 
     Concrete build systems inherit from this class and must override the
     :func:`emit_build_commands` abstract function.
-    """
+    '''
 
     #: The C compiler to be used.
     #: If set to :class:`None` and :attr:`flags_from_environ` is :class:`True`,
-    #: the compiler defined in the current programming environment will be used.
+    #: the compiler defined in the current programming environment will be
+    #: used.
     #:
     #: :type: :class:`str`
     #: :default: :class:`None`
@@ -23,7 +24,8 @@ class BuildSystem(abc.ABC):
 
     #: The C++ compiler to be used.
     #: If set to :class:`None` and :attr:`flags_from_environ` is :class:`True`,
-    #: the compiler defined in the current programming environment will be used.
+    #: the compiler defined in the current programming environment will be
+    #: used.
     #:
     #: :type: :class:`str`
     #: :default: :class:`None`
@@ -31,7 +33,8 @@ class BuildSystem(abc.ABC):
 
     #: The Fortran compiler to be used.
     #: If set to :class:`None` and :attr:`flags_from_environ` is :class:`True`,
-    #: the compiler defined in the current programming environment will be used.
+    #: the compiler defined in the current programming environment will be
+    #: used.
     #:
     #: :type: :class:`str`
     #: :default: :class:`None`
@@ -39,7 +42,8 @@ class BuildSystem(abc.ABC):
 
     #: The CUDA compiler to be used.
     #: If set to :class:`None` and :attr:`flags_from_environ` is :class:`True`,
-    #: the compiler defined in the current programming environment will be used.
+    #: the compiler defined in the current programming environment will be
+    #: used.
     #:
     #: :type: :class:`str`
     #: :default: :class:`None`
@@ -111,7 +115,7 @@ class BuildSystem(abc.ABC):
 
     @abc.abstractmethod
     def emit_build_commands(self, environ):
-        """Return the list of commands for building using this build system.
+        '''Return the list of commands for building using this build system.
 
         The build commands may always assume to be issued from the top-level
         directory of the code that is to be built.
@@ -125,7 +129,7 @@ class BuildSystem(abc.ABC):
 
         .. note::
             This method is relevant only to developers of new build systems.
-        """
+        '''
 
     def _resolve_flags(self, flags, environ):
         _flags = getattr(self, flags)
@@ -166,7 +170,7 @@ class BuildSystem(abc.ABC):
 
 
 class Make(BuildSystem):
-    """A build system for compiling codes using ``make``.
+    '''A build system for compiling codes using ``make``.
 
     The generated build command has the following form:
 
@@ -182,10 +186,11 @@ class Make(BuildSystem):
     invocation, you should make sure not to set any of the correspoding
     attributes and set also the :attr:`BuildSystem.flags_from_environ` flag to
     :class:`False`.
-    """
+    '''
 
     #: Append these options to the ``make`` invocation.
-    #: This variable is also useful for passing variables or targets to ``make``.
+    #: This variable is also useful for passing variables or targets to
+    #: ``make``.
     #:
     #: :type: :class:`List[str]`
     #: :default: ``[]``
@@ -214,7 +219,11 @@ class Make(BuildSystem):
     #: Otherwise, it will invoked as ``make -j``.
     #:
     #: :type: integer
-    #: :default: :class:`None`
+    #: :default: ``1``
+    #:
+    #: .. note::
+    #:     .. versionchanged:: 2.19
+    #:        The default value is now ``1``
     max_concurrency = fields.TypedField('max_concurrency', int, type(None))
 
     def __init__(self):
@@ -222,7 +231,7 @@ class Make(BuildSystem):
         self.options = []
         self.makefile = None
         self.srcdir = None
-        self.max_concurrency = None
+        self.max_concurrency = 1
 
     def emit_build_commands(self, environ):
         cmd_parts = ['make']
@@ -279,7 +288,7 @@ class Make(BuildSystem):
 
 
 class SingleSource(BuildSystem):
-    """A build system for compiling a single source file.
+    '''A build system for compiling a single source file.
 
     The generated build command will have the following form:
 
@@ -305,7 +314,7 @@ class SingleSource(BuildSystem):
     For CUDA codes, the language assumed is C++ (for the compilation flags) and
     the compiler used is :attr:`BuildSystem.nvcc`.
 
-    """
+    '''
 
     #: The source file to compile.
     #: This is automatically set by the framework based on the
@@ -435,7 +444,7 @@ class SingleSource(BuildSystem):
 
 
 class ConfigureBasedBuildSystem(BuildSystem):
-    """Abstract base class for configured-based build systems."""
+    '''Abstract base class for configured-based build systems.'''
 
     #: The top-level directory of the code.
     #:
@@ -467,7 +476,7 @@ class ConfigureBasedBuildSystem(BuildSystem):
     #: Same as for the :attr:`Make` build system.
     #:
     #: :type: integer
-    #: :default: :class:`None`
+    #: :default: ``1``
     max_concurrency = fields.TypedField('max_concurrency', int, type(None))
 
     def __init__(self):
@@ -476,11 +485,11 @@ class ConfigureBasedBuildSystem(BuildSystem):
         self.builddir = None
         self.config_opts = []
         self.make_opts = []
-        self.max_concurrency = None
+        self.max_concurrency = 1
 
 
 class CMake(ConfigureBasedBuildSystem):
-    """A build system for compiling CMake-based projects.
+    '''A build system for compiling CMake-based projects.
 
     This build system will emit the following commands:
 
@@ -489,7 +498,7 @@ class CMake(ConfigureBasedBuildSystem):
     2. Invoke ``cmake`` to configure the project by setting the corresponding
        CMake flags for compilers and compiler flags.
     3. Issue ``make`` to compile the code.
-    """
+    '''
 
     def _combine_flags(self, cppflags, xflags):
         if cppflags is None:
@@ -563,16 +572,16 @@ class CMake(ConfigureBasedBuildSystem):
 
 
 class Autotools(ConfigureBasedBuildSystem):
-    """A build system for compiling Autotools-based projects.
+    '''A build system for compiling Autotools-based projects.
 
     This build system will emit the following commands:
 
     1. Create a build directory if :attr:`builddir` is not :class:`None` and
        change to it.
-    2. Invoke ``configure`` to configure the project by setting the corresponding
-       flags for compilers and compiler flags.
+    2. Invoke ``configure`` to configure the project by setting the
+       corresponding flags for compilers and compiler flags.
     3. Issue ``make`` to compile the code.
-    """
+    '''
 
     def emit_build_commands(self, environ):
         prepare_cmd = []
@@ -592,7 +601,6 @@ class Autotools(ConfigureBasedBuildSystem):
         cc = self._cc(environ)
         cxx = self._cxx(environ)
         ftn = self._ftn(environ)
-        nvcc = self._nvcc(environ)
         cppflags = self._cppflags(environ)
         cflags   = self._cflags(environ)
         cxxflags = self._cxxflags(environ)
@@ -636,12 +644,6 @@ class Autotools(ConfigureBasedBuildSystem):
 
 
 class BuildSystemField(fields.TypedField):
-    """A field representing a build system.
-
-    You may either assign an instance of :class:`BuildSystem` or a string
-    representing the name of the concrete class of a build system.
-    """
-
     def __init__(self, fieldname, *other_types):
         super().__init__(fieldname, BuildSystem, *other_types)
 

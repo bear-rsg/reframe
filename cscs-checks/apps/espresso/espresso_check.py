@@ -10,8 +10,8 @@ class QECheck(rfm.RunOnlyRegressionTest):
     def __init__(self, scale):
         super().__init__()
         self.descr = 'Quantum Espresso CPU check'
-        self.maintainers = ['AK', 'LM']
-        self.tags = {'scs', 'production'}
+        self.maintainers = ['LM', 'CB']
+        self.tags = {'scs', 'production', 'external-resources'}
         self.sourcesdir = os.path.join(self.current_system.resourcesdir,
                                        'Espresso')
 

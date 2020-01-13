@@ -7,7 +7,7 @@ _SCHEDULERS = {}
 
 
 def register_scheduler(name, local=False):
-    """Class decorator for registering new schedulers."""
+    '''Class decorator for registering new schedulers.'''
 
     def _register_scheduler(cls):
         if name in _SCHEDULERS:
@@ -30,6 +30,6 @@ def getscheduler(name):
 
 
 # Import the schedulers modules to trigger their registration
-import reframe.core.schedulers.local
-import reframe.core.schedulers.slurm
-import reframe.core.schedulers.pbs
+import reframe.core.schedulers.local  # noqa: F401, F403
+import reframe.core.schedulers.slurm  # noqa: F401, F403
+import reframe.core.schedulers.pbs    # noqa: F401, F403

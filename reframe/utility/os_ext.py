@@ -2,6 +2,7 @@
 # OS and shell utility functions
 #
 
+import collections.abc
 import errno
 import getpass
 import grp
@@ -10,17 +11,20 @@ import re
 import shlex
 import shutil
 import signal
+import sys
 import subprocess
 import tempfile
 from urllib.parse import urlparse
 
+import reframe
 from reframe.core.exceptions import (ReframeError, SpawnedProcessError,
                                      SpawnedProcessTimeout)
 
 
-def run_command(cmd, check=False, timeout=None, shell=False):
+def run_command(cmd, check=False, timeout=None, shell=False, log=True):
     try:
-        proc = run_command_async(cmd, shell=shell, start_new_session=True)
+        proc = run_command_async(cmd, shell=shell, start_new_session=True,
+                                 log=log)
         proc_stdout, proc_stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as e:
         os.killpg(proc.pid, signal.SIGKILL)
@@ -64,11 +68,12 @@ def run_command_async(cmd,
                       stdout=subprocess.PIPE,
                       stderr=subprocess.PIPE,
                       shell=False,
+                      log=True,
                       **popen_args):
-    # Import logger here to avoid unnecessary circular dependencies
-    from reframe.core.logging import getlogger
+    if log:
+        from reframe.core.logging import getlogger
+        getlogger().debug('executing OS command: ' + cmd)
 
-    getlogger().debug('executing OS command: ' + cmd)
     if not shell:
         cmd = shlex.split(cmd)
 
@@ -81,10 +86,10 @@ def run_command_async(cmd,
 
 
 def osuser():
-    """Return the name of the current OS user.
+    '''Return the name of the current OS user.
 
     If the name cannot be retrieved, :class:`None` will be returned.
-    """
+    '''
     try:
         return getpass.getuser()
     except BaseException:
@@ -92,10 +97,10 @@ def osuser():
 
 
 def osgroup():
-    """Return the group name of the current OS user.
+    '''Return the group name of the current OS user.
 
     If the name cannot be retrieved, :class:`None` will be returned.
-    """
+    '''
     try:
         return grp.getgrgid(os.getgid()).gr_name
     except KeyError:
@@ -104,10 +109,10 @@ def osgroup():
 
 def copytree(src, dst, symlinks=False, ignore=None, copy_function=shutil.copy2,
              ignore_dangling_symlinks=False):
-    """Same as shutil.copytree() but valid also if 'dst' exists.
+    '''Same as shutil.copytree() but valid also if 'dst' exists.
 
     In this case it will first remove it and then call the standard
-    shutil.copytree()."""
+    shutil.copytree().'''
     if src == os.path.commonpath([src, dst]):
         raise ValueError("cannot copy recursively the parent directory "
                          "`%s' into one of its descendants `%s'" % (src, dst))
@@ -122,12 +127,12 @@ def copytree(src, dst, symlinks=False, ignore=None, copy_function=shutil.copy2,
 def copytree_virtual(src, dst, file_links=[],
                      symlinks=False, copy_function=shutil.copy2,
                      ignore_dangling_symlinks=False):
-    """Copy `dst` to `src`, but create symlinks for the files in `file_links`.
+    '''Copy `dst` to `src`, but create symlinks for the files in `file_links`.
 
     If `file_links` is empty, this is equivalent to `copytree()`.  The rest of
     the arguments are passed as-is to `copytree()`.  Paths in `file_links` must
     be relative to `src`. If you try to pass `.` in `file_links`, `OSError`
-    will be raised."""
+    will be raised.'''
 
     if not hasattr(file_links, '__iter__'):
         raise TypeError('expecting an iterable as file_links')
@@ -174,7 +179,7 @@ def copytree_virtual(src, dst, file_links=[],
 
 
 def rmtree(*args, max_retries=3, **kwargs):
-    """Persistent version of ``shutil.rmtree()``.
+    '''Persistent version of ``shutil.rmtree()``.
 
     If ``shutil.rmtree()`` fails with ``ENOTEMPTY`` or ``EBUSY``, retry up to
     ``max_retries`times to delete the directory.
@@ -192,7 +197,7 @@ def rmtree(*args, max_retries=3, **kwargs):
 
     If ``onerror``  is specified in  ``kwargs`` and is not  :class:`None`, this
     function is completely equivalent to ``shutil.rmtree()``.
-    """
+    '''
     if 'onerror' in kwargs and kwargs['onerror'] is not None:
         shutil.rmtree(*args, **kwargs)
         return
@@ -211,14 +216,14 @@ def rmtree(*args, max_retries=3, **kwargs):
 
 
 def inpath(entry, pathvar):
-    """Check if entry is in pathvar. pathvar is a string of the form
-    `entry1:entry2:entry3`."""
+    '''Check if entry is in pathvar. pathvar is a string of the form
+    `entry1:entry2:entry3`.'''
     return entry in set(pathvar.split(':'))
 
 
 def subdirs(dirname, recurse=False):
-    """Returns a list of dirname + its subdirectories. If recurse is True,
-    recursion is performed in pre-order."""
+    '''Returns a list of dirname + its subdirectories. If recurse is True,
+    recursion is performed in pre-order.'''
     dirs = []
     if os.path.isdir(dirname):
         dirs.append(dirname)
@@ -230,7 +235,7 @@ def subdirs(dirname, recurse=False):
 
 
 def follow_link(path):
-    """Return the final target of a symlink chain"""
+    '''Return the final target of a symlink chain'''
     while os.path.islink(path):
         path = os.readlink(path)
 
@@ -238,13 +243,13 @@ def follow_link(path):
 
 
 def samefile(path1, path2):
-    """Check if paths refer to the same file.
+    '''Check if paths refer to the same file.
 
     If paths exist, this is equivalent to `os.path.samefile()`. If only one of
     the paths exists, it will be followed if it is a symbolic link and its
     final target will be compared to the other path. If both paths do not
     exist, a simple string comparison will be performed (after they have been
-    normalized)."""
+    normalized).'''
 
     # normalise the paths first
     path1 = os.path.normpath(path1)
@@ -262,7 +267,7 @@ def mkstemp_path(*args, **kwargs):
 
 
 def force_remove_file(filename):
-    """Remove filename ignoring errors if the file does not exist."""
+    '''Remove filename ignoring errors if the file does not exist.'''
     try:
         os.remove(filename)
     except FileNotFoundError:
@@ -270,8 +275,8 @@ def force_remove_file(filename):
 
 
 class change_dir:
-    """Context manager which changes the current working directory to the
-       provided one."""
+    '''Context manager which changes the current working directory to the
+       provided one.'''
 
     def __init__(self, dir_name):
         self._wd_save = os.getcwd()
@@ -285,13 +290,13 @@ class change_dir:
 
 
 def is_url(s):
-    """Check if string is an URL."""
+    '''Check if string is a URL.'''
     parsed = urlparse(s)
     return parsed.scheme != '' and parsed.netloc != ''
 
 
 def git_clone(url, targetdir=None):
-    """Clone git repository from an URL."""
+    '''Clone git repository from a URL.'''
     if not git_repo_exists(url):
         raise ReframeError('git repository does not exist')
 
@@ -300,7 +305,7 @@ def git_clone(url, targetdir=None):
 
 
 def git_repo_exists(url, timeout=5):
-    """Check if URL refers to git valid repository."""
+    '''Check if URL refers to git valid repository.'''
     try:
         os.environ['GIT_TERMINAL_PROMPT'] = '0'
         run_command('git ls-remote -h %s' % url, check=True,
@@ -311,13 +316,60 @@ def git_repo_exists(url, timeout=5):
         return True
 
 
+def git_repo_hash(branch='HEAD', short=True, wd=None):
+    '''Return the SHA1 hash of a git repository.
+
+    :arg branch: The branch to look at.
+    :arg short: Return a short hash. This always corresponds to the first 8
+        characters of the long hash. We don't rely on Git for the short hash,
+        since depending on the version it might return either 7 or 8
+        characters.
+    :arg wd: Change to this directory before retrieving the hash. If ``None``,
+        ReFrame's install prefix will be used.
+    :returns: The repository has or ``None`` if the hash could not be
+        retrieved.
+
+    '''
+    try:
+        wd = wd or reframe.INSTALL_PREFIX
+        with change_dir(wd):
+            # Do not log this command, since we need to call this function
+            # from the logger
+            completed = run_command('git rev-parse %s' % branch,
+                                    check=True, log=False)
+
+    except SpawnedProcessError:
+        return None
+
+    hash = completed.stdout.strip()
+    if hash:
+        return hash[:8] if short else hash
+    else:
+        return None
+
+
+def reframe_version():
+    '''Return ReFrame version.
+
+    If ReFrame's installation contains the repository metadata, the
+    repository's hash will be appended to the actual version.
+
+    '''
+    version = reframe.VERSION
+    repo_hash = git_repo_hash()
+    if repo_hash:
+        return '%s (rev: %s)' % (version, repo_hash)
+    else:
+        return version
+
+
 def expandvars(path):
-    """Expand environment variables in ``path`` and
+    '''Expand environment variables in ``path`` and
         perform any command substitution
 
     This function is the same as ``os.path.expandvars()``, except that it
     understands also the syntax: $(cmd)`` or `cmd`.
-    """
+    '''
     cmd_subst = re.compile(r'`(.*)`|\$\((.*)\)')
     cmd_subst_m = cmd_subst.search(path)
     if not cmd_subst_m:
@@ -331,3 +383,28 @@ def expandvars(path):
     # Prepare stdout for inline use
     stdout = completed.stdout.replace('\n', ' ').strip()
     return cmd_subst.sub(stdout, path)
+
+
+def concat_files(dst, *files, sep='\n', overwrite=False):
+    '''Concatenate ``files`` into ``dst``.
+
+       :arg dst: The name of the output file.
+       :arg files: The files to concatenate.
+       :arg sep: The separator to use during concatenation.
+       :arg overwrite: Overwrite the ``output`` file if it already exists.
+       :raises TypeError: In case ``files`` it not an iterable object.
+       :raises ValueError: In case ``output`` already exists and ovewrite is
+           :class:`False`.
+    '''
+    if not isinstance(files, collections.abc.Iterable):
+        raise TypeError("'%s' object is not iterable" %
+                        files.__class__.__name__)
+
+    if os.path.exists(dst) and not overwrite:
+        raise ValueError("file '%s' already exists" % dst)
+
+    with open(dst, 'w') as fw:
+        for f in files:
+            with open(f, 'r') as fr:
+                fw.write(fr.read())
+                fw.write(sep)

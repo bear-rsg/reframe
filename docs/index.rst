@@ -25,17 +25,22 @@ The ReFrame framework has been in production at `CSCS <http://www.cscs.ch>`__ si
 Latest Release
 ==============
 
-Reframe is being actively developed at `CSCS <http://www.cscs.ch/>`__.
+ReFrame is being actively developed at `CSCS <http://www.cscs.ch/>`__.
 You can always find the latest release `here <https://github.com/eth-cscs/reframe/releases/latest>`__.
 
 Publications
 ============
 
-* `Presentation <https://drive.google.com/file/d/1sIecW59E-AvhD-vl6c6QGXM14UKNzgo_/view?usp=sharing>`__ & `Demo <https://asciinema.org/a/6SQJTaRe2zrMInV92X0yb2gTh>`__ @ `SC18 <https://sc18.supercomputing.org/>`__
-* Presentation [`pdf <https://github.com/eth-cscs/UserLabDay/blob/master/slides/ci_and_regression/ReFrame_CI.pdf>`__] [`pptx <https://github.com/eth-cscs/UserLabDay/blob/master/slides/ci_and_regression/ReFrame_CI.pptx>`__] @ `CSCS User Lab Day 2018 <https://github.com/eth-cscs/UserLabDay>`__
-* `Presentation <_static/files/reframe-hpac18-slides.pdf>`__ & `Demo1 <https://asciinema.org/a/kAETsA1ojG6L7dkzow8opEGvr>`__,  `Demo2 <https://asciinema.org/a/LLcOToWYX4gRIfrcb1GpmvkuB>`__ @ `HPC Advisory Council 2018 <http://www.hpcadvisorycouncil.com/events/2018/swiss-workshop/>`__
-* `Presentation <_static/files/reframe-bof-sc17-slides.pdf>`__ & `Demo <https://asciinema.org/a/kBZfdV0rmc0PCd84zxk6nAojG>`__ @ `SC17 <https://sc17.supercomputing.org/>`__
-* `Presentation <_static/files/reframe-cug17-slides.pdf>`__ @ `CUG 2017 <https://cug.org/cug-2017/>`__
+* Slides [`pdf <https://drive.google.com/open?id=1Z3faPh9OSSXvlLHL07co3MRRn443dYsY>`__] @ `HPC System Testing BoF <https://sc19.supercomputing.org/session/?sess=sess324>`__, SC'19.
+* Slides [`pdf <https://drive.google.com/open?id=1JOFqY3ejbR1X5kTn_IZyp1GlCd2ZZS58>`__] @ `HUST 2019 <https://sc19.supercomputing.org/session/?sess=sess116>`__, SC'19.
+* Slides [`pdf <https://drive.google.com/open?id=1iwg1I48LVaWhhZCZIYPJSi3hdFLRcuhi>`__] @ `HPC Knowledge Meeting '19 <https://hpckp.org/>`__.
+* Slides [`pdf <https://fosdem.org/2019/schedule/event/reframe/attachments/slides/3226/export/events/attachments/reframe/slides/3226/FOSDEM_2019.pdf>`__] & `Talk <https://fosdem.org/2019/schedule/event/reframe/>`__ @ `FOSDEM'19 <https://fosdem.org/2019/>`__.
+* Slides [`pdf <https://indico.cism.ucl.ac.be/event/4/contributions/24/attachments/30/62/ReFrame_EUM_2019.pdf>`__] @ `4th EasyBuild User Meeting <https://github.com/easybuilders/easybuild/wiki/4th-EasyBuild-User-Meeting>`__.
+* Slides [`pdf <https://drive.google.com/open?id=1bSykDrl1e2gPflf4jFJ8kfe_SZAtrJ_Q>`__] @ `HUST 2018 <https://sc18.supercomputing.org/>`__, SC'18.
+* Slides [`pdf <https://github.com/eth-cscs/UserLabDay/blob/master/slides/ci_and_regression/ReFrame_CI.pdf>`__] [`pptx <https://github.com/eth-cscs/UserLabDay/blob/master/slides/ci_and_regression/ReFrame_CI.pptx>`__] @ `CSCS User Lab Day 2018 <https://github.com/eth-cscs/UserLabDay>`__.
+* Slides [`pdf <https://drive.google.com/open?id=1sZhibvUlGlT670aOHPdMlWFffWptYzLX>`__] @ `HPC Advisory Council 2018 <http://www.hpcadvisorycouncil.com/events/2018/swiss-workshop/>`__.
+* Slides [`pdf <https://drive.google.com/open?id=1EyJ-siupkgLeVT54A4WlFpQtrJaU0xOy>`__] @ `SC17 <https://sc17.supercomputing.org/>`__.
+* Slides [`pdf <https://drive.google.com/open?id=18VrCy0MTplGo67uxVbzYZicQChor9VSY>`__] @ `CUG 2017 <https://cug.org/cug-2017/>`__.
 
 
 
@@ -48,6 +53,7 @@ Publications
    The Regression Test Pipeline <pipeline>
    ReFrame Tutorial <tutorial>
    Customizing Further A Regression Test <advanced>
+   How Test Dependencies Work in ReFrame <dependencies>
    Understanding The Mechanism Of Sanity Functions <deferrables>
    Running ReFrame <running>
    Use cases <usecases>

@@ -1,4 +1,3 @@
-import os
 import collections.abc
 
 import reframe.core.debug as debug
@@ -6,8 +5,7 @@ import reframe.core.fields as fields
 import reframe.utility as util
 import reframe.utility.os_ext as os_ext
 import reframe.utility.typecheck as types
-from reframe.core.exceptions import (ConfigError,
-                                     ReframeError, ReframeFatalError)
+from reframe.core.exceptions import (ConfigError, ReframeFatalError)
 
 
 _settings = None
@@ -31,7 +29,7 @@ def settings():
 
 
 class SiteConfiguration:
-    """Holds the configuration of systems and environments"""
+    '''Holds the configuration of systems and environments'''
     _modes = fields.ScopedDictField('_modes', types.List[str])
 
     def __init__(self, dict_config=None):
@@ -64,7 +62,7 @@ class SiteConfiguration:
 
         try:
             sched_descr, launcher_descr = descr.split('+')
-        except ValueError as e:
+        except ValueError:
             raise ValueError('invalid syntax for the '
                              'scheduling system: %s' % descr) from None
 
@@ -109,7 +107,7 @@ class SiteConfiguration:
             # Create an environment instance
             try:
                 config = envconfig['%s:%s:%s' % (system, partition, name)]
-            except KeyError as e:
+            except KeyError:
                 raise ConfigError(
                     "could not find a definition for `%s'" % name
                 ) from None
@@ -144,10 +142,8 @@ class SiteConfiguration:
             sys_stagedir = config.get('stagedir', None)
             sys_outputdir = config.get('outputdir', None)
             sys_perflogdir = config.get('perflogdir', None)
-            sys_logdir = config.get('logdir', None)
             sys_resourcesdir = config.get('resourcesdir', '.')
             sys_modules_system = config.get('modules_system', None)
-            sys_modules_system_purge = config.get('modules_system_purge', False)
 
             # Expand variables
             if sys_prefix:
@@ -165,16 +161,23 @@ class SiteConfiguration:
             if sys_resourcesdir:
                 sys_resourcesdir = os_ext.expandvars(sys_resourcesdir)
 
+            # Create the preload environment for the system
+            sys_preload_env = m_env.Environment(
+                name='__rfm_env_%s' % sys_name,
+                modules=config.get('modules', []),
+                variables=config.get('variables', {})
+            )
+
             system = System(name=sys_name,
                             descr=sys_descr,
                             hostnames=sys_hostnames,
+                            preload_env=sys_preload_env,
                             prefix=sys_prefix,
                             stagedir=sys_stagedir,
                             outputdir=sys_outputdir,
                             perflogdir=sys_perflogdir,
                             resourcesdir=sys_resourcesdir,
-                            modules_system=sys_modules_system,
-                            modules_system_purge=sys_modules_system_purge)
+                            modules_system=sys_modules_system)
             for part_name, partconfig in config.get('partitions', {}).items():
                 if not isinstance(partconfig, collections.abc.Mapping):
                     raise TypeError("partition `%s' not configured "
@@ -196,14 +199,25 @@ class SiteConfiguration:
                 part_access = partconfig.get('access', [])
                 part_resources = partconfig.get('resources', {})
                 part_max_jobs = partconfig.get('max_jobs', 1)
-                system.add_partition(SystemPartition(name=part_name,
-                                                     descr=part_descr,
-                                                     scheduler=part_scheduler,
-                                                     launcher=part_launcher,
-                                                     access=part_access,
-                                                     environs=part_environs,
-                                                     resources=part_resources,
-                                                     local_env=part_local_env,
-                                                     max_jobs=part_max_jobs))
+                part = SystemPartition(name=part_name,
+                                       descr=part_descr,
+                                       scheduler=part_scheduler,
+                                       launcher=part_launcher,
+                                       access=part_access,
+                                       environs=part_environs,
+                                       resources=part_resources,
+                                       local_env=part_local_env,
+                                       max_jobs=part_max_jobs)
+
+                container_platforms = partconfig.get('container_platforms', {})
+                for cp, env_spec in container_platforms.items():
+                    cp_env = m_env.Environment(
+                        name='__rfm_env_%s' % cp,
+                        modules=env_spec.get('modules', []),
+                        variables=env_spec.get('variables', {})
+                    )
+                    part.add_container_env(cp, cp_env)
+
+                system.add_partition(part)
 
             self._systems[sys_name] = system

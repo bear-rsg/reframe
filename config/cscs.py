@@ -4,7 +4,6 @@
 
 
 class ReframeSettings:
-    reframe_module = 'reframe'
     job_poll_intervals = [1, 2, 3]
     job_submit_timeout = 60
     checks_path = ['checks/']
@@ -54,6 +53,34 @@ class ReframeSettings:
                 }
             },
 
+            'tave': {
+                'descr': 'Grand Tave',
+                'hostnames': ['tave'],
+                'modules_system': 'tmod',
+                'resourcesdir': '/apps/common/UES/reframe/resources',
+                'partitions': {
+                    'login': {
+                        'scheduler': 'local',
+                        'environs': ['PrgEnv-cray', 'PrgEnv-gnu',
+                                     'PrgEnv-intel', 'PrgEnv-pgi'],
+                        'descr': 'Login nodes',
+                        'max_jobs': 4
+                    },
+                    'compute': {
+                        'scheduler': 'nativeslurm',
+                        'container_platforms': {
+                            'ShifterNG': {
+                                'modules': ['shifter-ng']
+                            }
+                        },
+                        'environs': ['PrgEnv-cray', 'PrgEnv-gnu',
+                                     'PrgEnv-intel', 'PrgEnv-pgi'],
+                        'descr': 'Intel Xeon Phi',
+                        'max_jobs': 100,
+                    }
+                }
+            },
+
             'daint': {
                 'descr': 'Piz Daint',
                 'hostnames': ['daint'],
@@ -72,6 +99,14 @@ class ReframeSettings:
 
                     'gpu': {
                         'scheduler': 'nativeslurm',
+                        'container_platforms': {
+                            'ShifterNG': {
+                                'modules': ['shifter-ng']
+                            },
+                            'Singularity': {
+                                'modules': ['singularity']
+                            }
+                        },
                         'modules': ['daint-gpu'],
                         'access':  ['--constraint=gpu'],
                         'environs': ['PrgEnv-cray', 'PrgEnv-gnu',
@@ -85,6 +120,14 @@ class ReframeSettings:
 
                     'mc': {
                         'scheduler': 'nativeslurm',
+                        'container_platforms': {
+                            'ShifterNG': {
+                                'modules': ['shifter-ng']
+                            },
+                            'Singularity': {
+                                'modules': ['singularity']
+                            }
+                        },
                         'modules': ['daint-mc'],
                         'access':  ['--constraint=mc'],
                         'environs': ['PrgEnv-cray', 'PrgEnv-gnu',
@@ -94,6 +137,22 @@ class ReframeSettings:
                         'resources': {
                             'switches': ['--switches={num_switches}']
                         }
+                    },
+
+                    'jupyter_gpu': {
+                        'scheduler': 'nativeslurm',
+                        'environs': ['builtin'],
+                        'access': ['-Cgpu', '--reservation=jupyter_gpu'],
+                        'descr': 'JupyterHub GPU nodes',
+                        'max_jobs': 10,
+                    },
+
+                    'jupyter_mc': {
+                        'scheduler': 'nativeslurm',
+                        'environs': ['builtin'],
+                        'access': ['-Cmc', '--reservation=jupyter_mc'],
+                        'descr': 'JupyterHub multicore nodes',
+                        'max_jobs': 10,
                     }
                 }
             },
@@ -109,37 +168,63 @@ class ReframeSettings:
                         'scheduler': 'local',
                         'modules': [],
                         'access':  [],
-                        'environs': ['PrgEnv-cray', 'PrgEnv-gnu',
-                                     'PrgEnv-intel'],
+                        'environs': ['PrgEnv-cray', 'PrgEnv-cray_classic',
+                                     'PrgEnv-gnu', 'PrgEnv-intel',
+                                     'PrgEnv-pgi'],
                         'descr': 'Login nodes',
                         'max_jobs': 4
                     },
 
                     'gpu': {
                         'scheduler': 'nativeslurm',
+                        'container_platforms': {
+                            'Singularity': {
+                                'modules': ['singularity']
+                            },
+                        },
                         'modules': ['daint-gpu'],
                         'access':  ['--constraint=gpu'],
-                        'environs': ['PrgEnv-cray', 'PrgEnv-gnu',
-                                     'PrgEnv-intel'],
+                        'environs': ['PrgEnv-cray', 'PrgEnv-cray_classic',
+                                     'PrgEnv-gnu', 'PrgEnv-intel',
+                                     'PrgEnv-pgi'],
                         'descr': 'Hybrid nodes (Haswell/P100)',
                         'max_jobs': 100,
-                        'resources': {
-                            'switches': ['--switches={num_switches}']
-                        }
                     },
 
                     'mc': {
                         'scheduler': 'nativeslurm',
+                        'container_platforms': {
+                            'Singularity': {
+                                'modules': ['singularity']
+                            },
+                        },
                         'modules': ['daint-mc'],
                         'access':  ['--constraint=mc'],
-                        'environs': ['PrgEnv-cray', 'PrgEnv-gnu',
-                                     'PrgEnv-intel'],
+                        'environs': ['PrgEnv-cray', 'PrgEnv-cray_classic',
+                                     'PrgEnv-gnu', 'PrgEnv-intel',
+                                     'PrgEnv-pgi'],
                         'descr': 'Multicore nodes (Broadwell)',
                         'max_jobs': 100,
                         'resources': {
                             'switches': ['--switches={num_switches}']
                         }
                     },
+
+                    'jupyter_gpu': {
+                        'scheduler': 'nativeslurm',
+                        'environs': ['builtin'],
+                        'access': ['-Cgpu', '--reservation=jupyter_gpu'],
+                        'descr': 'JupyterHub GPU nodes',
+                        'max_jobs': 10,
+                    },
+
+                    'jupyter_mc': {
+                        'scheduler': 'nativeslurm',
+                        'environs': ['builtin'],
+                        'access': ['-Cmc', '--reservation=jupyter_mc'],
+                        'descr': 'JupyterHub multicore nodes',
+                        'max_jobs': 10,
+                    }
                 }
             },
 
@@ -180,7 +265,7 @@ class ReframeSettings:
 
             'kesch': {
                 'descr': 'Kesch MCH',
-                'hostnames': ['keschln-\d+'],
+                'hostnames': [r'keschln-\d+'],
                 'modules_system': 'tmod',
                 'resourcesdir': '/apps/common/UES/reframe/resources',
                 'partitions': {
@@ -196,13 +281,7 @@ class ReframeSettings:
                         'access': ['--partition=pn-regression'],
                         'environs': ['PrgEnv-cray', 'PrgEnv-cray-nompi',
                                      'PrgEnv-pgi', 'PrgEnv-pgi-nompi',
-                                     'PrgEnv-gnu', 'PrgEnv-gnu-nompi',
-                                     'PrgEnv-cray-c2sm',
-                                     'PrgEnv-pgi-c2sm',
-                                     'PrgEnv-gnu-c2sm',
-                                     'PrgEnv-cray-c2sm-gpu',
-                                     'PrgEnv-pgi-c2sm-gpu',
-                                     'PrgEnv-gnu-c2sm-gpu'],
+                                     'PrgEnv-gnu', 'PrgEnv-gnu-nompi'],
                         'descr': 'Kesch post-processing nodes'
                     },
 
@@ -211,13 +290,7 @@ class ReframeSettings:
                         'access': ['--partition=cn-regression'],
                         'environs': ['PrgEnv-cray', 'PrgEnv-cray-nompi',
                                      'PrgEnv-pgi', 'PrgEnv-pgi-nompi',
-                                     'PrgEnv-gnu', 'PrgEnv-gnu-nompi',
-                                     'PrgEnv-cray-c2sm',
-                                     'PrgEnv-pgi-c2sm',
-                                     'PrgEnv-gnu-c2sm',
-                                     'PrgEnv-cray-c2sm-gpu',
-                                     'PrgEnv-pgi-c2sm-gpu',
-                                     'PrgEnv-gnu-c2sm-gpu'],
+                                     'PrgEnv-gnu', 'PrgEnv-gnu-nompi'],
                         'descr': 'Kesch compute nodes',
                         'resources': {
                             '_rfm_gpu': ['--gres=gpu:{num_gpus_per_node}'],
@@ -280,7 +353,7 @@ class ReframeSettings:
                         'modules': [],
                         'access': [],
                         'environs': ['builtin-gcc'],
-                        'descr': 'Login nodes'
+                        'descr': 'Login nodes',
                     }
                 }
             }
@@ -314,29 +387,36 @@ class ReframeSettings:
             'kesch': {
                 'PrgEnv-pgi-nompi': {
                     'type': 'ProgEnvironment',
-                    'modules': ['PrgEnv-pgi/17.10'],
+                    'modules': ['PE/17.06',
+                                'PrgEnv-pgi/18.5'],
                     'cc': 'pgcc',
                     'cxx': 'pgc++',
                     'ftn': 'pgf90',
                 },
                 'PrgEnv-pgi': {
                     'type': 'ProgEnvironment',
-                    'modules': ['PrgEnv-pgi/17.10_gdr'],
+                    'modules': [
+                        'PE/17.06', 'pgi/18.5-gcc-5.4.0-2.26',
+                        'openmpi/4.0.1-pgi-18.5-gcc-5.4.0-2.26-cuda-8.0'
+                    ],
                     'cc': 'mpicc',
                     'cxx': 'mpicxx',
-                    'ftn': 'mpif90',
+                    'ftn': 'mpifort',
                 },
                 'PrgEnv-cray': {
                     'type': 'ProgEnvironment',
-                    'modules': ['PrgEnv-cray/1.0.2_gdr'],
+                    'modules': ['PE/17.06',
+                                'PrgEnv-CrayCCE/17.06'],
                 },
                 'PrgEnv-cray-nompi': {
                     'type': 'ProgEnvironment',
-                    'modules': ['PrgEnv-cray'],
+                    'modules': ['PE/17.06',
+                                'PrgEnv-cray'],
                 },
                 'PrgEnv-gnu': {
                     'type': 'ProgEnvironment',
-                    'modules': ['gmvapich2/17.02_cuda_8.0_gdr'],
+                    'modules': ['PE/17.06',
+                                'gmvapich2/17.02_cuda_8.0_gdr'],
                     'variables': {
                         'LD_PRELOAD': '$(pkg-config --variable=libdir mvapich2-gdr)/libmpi.so'
                     },
@@ -346,7 +426,8 @@ class ReframeSettings:
                 },
                 'PrgEnv-gnu-nompi': {
                     'type': 'ProgEnvironment',
-                    'modules': ['PrgEnv-gnu'],
+                    'modules': ['PE/17.06',
+                                'PrgEnv-gnu'],
                     'cc': 'gcc',
                     'cxx': 'g++',
                     'ftn': 'gfortran',
@@ -421,6 +502,11 @@ class ReframeSettings:
                     'modules': ['PrgEnv-cray'],
                 },
 
+                'PrgEnv-cray_classic': {
+                    'type': 'ProgEnvironment',
+                    'modules': ['PrgEnv-cray', 'cce/9.0.2-classic'],
+                },
+
                 'PrgEnv-gnu': {
                     'type': 'ProgEnvironment',
                     'modules': ['PrgEnv-gnu'],
@@ -455,6 +541,7 @@ class ReframeSettings:
         'modes': {
             '*': {
                 'maintenance': [
+                    '--unload-module=reframe',
                     '--exec-policy=async',
                     '--strict',
                     '--output=$APPS/UES/$USER/regression/maintenance',
@@ -466,6 +553,7 @@ class ReframeSettings:
                     '--timestamp=%F_%H-%M-%S'
                 ],
                 'production': [
+                    '--unload-module=reframe',
                     '--exec-policy=async',
                     '--strict',
                     '--output=$APPS/UES/$USER/regression/production',
@@ -529,6 +617,7 @@ class ReframeSettings:
                 'format': (
                     '%(asctime)s|reframe %(version)s|'
                     '%(check_info)s|jobid=%(check_jobid)s|'
+                    'num_tasks=%(check_num_tasks)s|'
                     '%(check_perf_var)s=%(check_perf_value)s|'
                     'ref=%(check_perf_ref)s '
                     '(l=%(check_perf_lower_thres)s, '

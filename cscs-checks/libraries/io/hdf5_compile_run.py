@@ -14,8 +14,8 @@ class HDF5Test(rfm.RegressionTest):
         }
         self.descr = lang_names[lang] + ' HDF5 ' + linkage.capitalize()
         self.sourcepath = 'h5ex_d_chunk.' + lang
-        self.valid_systems = ['daint:gpu', 'daint:mc',
-                              'dom:gpu', 'dom:mc']
+        self.valid_systems = ['daint:gpu', 'daint:mc', 'dom:gpu', 'dom:mc',
+                              'tiger:gpu']
         self.valid_prog_environs = ['PrgEnv-cray', 'PrgEnv-gnu',
                                     'PrgEnv-intel', 'PrgEnv-pgi']
         self.modules = ['cray-hdf5']
@@ -72,5 +72,5 @@ class HDF5Test(rfm.RegressionTest):
         self.build_system.ldflags = ['-%s' % linkage]
         self.post_run = ['h5dump h5ex_d_chunk.h5 > h5dump_out.txt']
 
-        self.maintainers = ['SO']
-        self.tags = {'production'}
+        self.maintainers = ['SO', 'RS']
+        self.tags = {'production', 'craype'}
