@@ -125,9 +125,11 @@ def load(*environs):
     rt = runtime()
     for env in environs:
         for m in env.modules:
-            conflicted = rt.modules_system.load_module(m, force=True)
-            for c in conflicted:
-                commands += rt.modules_system.emit_unload_commands(c)
+            # This checks the modules on the host system, but we do not want to do that...
+            # removing this also speeds up the testing, as we do not test loading all modules
+            # conflicted = rt.modules_system.load_module(m, force=True)
+            # for c in conflicted:
+            #     commands += rt.modules_system.emit_unload_commands(c)
 
             commands += rt.modules_system.emit_load_commands(m)
 

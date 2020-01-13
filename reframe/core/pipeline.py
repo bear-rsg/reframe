@@ -256,6 +256,16 @@ class RegressionTest(metaclass=RegressionTestMeta):
     #: :default: ``[]``
     executable_opts = fields.TypedField('executable_opts', typ.List[str])
 
+    #: List of shell commands to execute before loading the environment for this job.
+    #:
+    #: These commands do not execute in the context of ReFrame.
+    #: Instead, they are emitted in the generated job script just before the
+    #: environment of the job script is loaded.
+    #:
+    #: :type: :class:`List[str]`
+    #: :default: ``[]``
+    pre_environ = fields.TypedField('pre_environ', typ.List[str])
+
     #: The container platform to be used for launching this test.
     #:
     #: If this field is set, the test will run inside a container using the
@@ -668,6 +678,7 @@ class RegressionTest(metaclass=RegressionTestMeta):
         self.postbuild_cmd = []
         self.executable = os.path.join('.', self.name)
         self.executable_opts = []
+        self.pre_environ  = []
         self.pre_run = []
         self.post_run = []
         self.keep_files = []
@@ -976,6 +987,7 @@ class RegressionTest(metaclass=RegressionTestMeta):
                                launcher_type(),
                                name='rfm_%s_job' % self.name,
                                workdir=self._stagedir,
+                               pre_environ=self.pre_environ,
                                sched_access=self._current_partition.access,
                                sched_exclusive_access=self.exclusive_access,
                                **job_opts)
@@ -1164,6 +1176,7 @@ class RegressionTest(metaclass=RegressionTestMeta):
         self.job.num_cpus_per_task = self.num_cpus_per_task
         self.job.use_smt = self.use_multithreading
         self.job.time_limit = self.time_limit
+        self.job.deadline = self.deadline
 
         exec_cmd = [self.job.launcher.run_command(self.job),
                     self.executable, *self.executable_opts]
@@ -1187,7 +1200,7 @@ class RegressionTest(metaclass=RegressionTestMeta):
 
         with os_ext.change_dir(self._stagedir):
             try:
-                self._job.prepare(commands, environs)
+                self._job.prepare(commands, environs, self.pre_environ)
             except OSError as e:
                 raise PipelineError('failed to prepare job') from e
 

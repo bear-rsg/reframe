@@ -158,6 +158,9 @@ class SlurmJobScheduler(sched.JobScheduler):
                 self._format_option('%d:%d:%d' % job.time_limit, '--time={0}')
             )
 
+        if job.deadline is not None:
+            preamble.append(self._format_option(job.deadline, '--deadline={0}'))
+
         if job.sched_exclusive_access:
             preamble.append(
                 self._format_option(job.sched_exclusive_access, '--exclusive')
