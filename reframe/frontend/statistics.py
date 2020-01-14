@@ -127,8 +127,6 @@ class TestStats:
                     report.append('- %s' % t.check.current_partition.fullname)
                     previous_part = t.check.current_partition.fullname
 
-                report.append('   - %s' % t.check.current_environ)
-
             for key, ref in t.check.perfvalues.items():
                 var = key.split(':')[-1]
                 val = ref[0]
@@ -137,7 +135,7 @@ class TestStats:
                 except IndexError:
                     unit = '(no unit specified)'
 
-                report.append('      * %s: %s %s' % (var, val, unit))
+                report.append('   * %s: %s %s' % (var, val, unit))
 
         report.append(line_width * '-')
         return '\n'.join(report)
