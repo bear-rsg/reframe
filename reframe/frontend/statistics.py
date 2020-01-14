@@ -129,8 +129,6 @@ class TestStats:
 
                 report.append('   - %s' % t.check.current_environ)
 
-            report.append('      * num_tasks: %s' % t.check.num_tasks)
-
             for key, ref in t.check.perfvalues.items():
                 var = key.split(':')[-1]
                 val = ref[0]
